@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Perfil · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel mb-4">
+  <div class="row g-4 align-items-start">
+    <div class="col-lg-7">
+      <span class="eyebrow">Perfil y setup</span>
+      <h1 class="section-title mt-3">Configura Spotify y valida tu sesion</h1>
+      <p class="panel-copy mt-3 mb-0">Guarda. Prueba. Inicia sesion.</p>
+    </div>
+    <div class="col-lg-5">
+      <div class="info-note h-100">
+        <strong>Estado rapido</strong>
+        <div class="summary-list mt-3">
+          <p><strong>Client ID:</strong> {{ 'configurado' if env_values.SPOTIFY_CLIENT_ID else 'pendiente' }}</p>
+          <p><strong>Client Secret:</strong> {{ 'configurado' if env_values.SPOTIFY_CLIENT_SECRET else 'pendiente' }}</p>
+          <p><strong>Redirect URI:</strong> {{ env_values.SPOTIFY_REDIRECT_URI or 'pendiente' }}</p>
+          <p class="mb-0"><strong>Sesion:</strong> {{ 'valida' if token_status.is_valid else 'sin validar' }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="row g-4 align-items-start">
+  <div class="col-xl-5">
+    <div class="content-panel h-100 steps-panel">
+      <span class="eyebrow">Guia</span>
+      {% for step in setup_steps %}
+        <div class="process-step {% if loop.first %}mt-4{% endif %} {% if loop.last %}mb-0{% endif %}">
+          <span>{{ '%02d' % loop.index }}</span>
+          <div>
+            <strong>Paso {{ loop.index }}</strong>
+            <p class="mb-0">{{ step }}</p>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="col-xl-7">
+    <div class="content-panel h-100 form-panel">
+      <div class="section-heading mb-4">
+        <span class="eyebrow">Editor .env</span>
+        <h2 class="section-title">Credenciales</h2>
+      </div>
+
+      <form method="post" class="playlist-form">
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label for="spotify_client_id" class="form-label">Spotify Client ID</label>
+            <input id="spotify_client_id" name="spotify_client_id" type="text" class="form-control nozomi-input" value="{{ env_values.SPOTIFY_CLIENT_ID }}">
+          </div>
+          <div class="col-md-6">
+            <label for="spotify_client_secret" class="form-label">Spotify Client Secret</label>
+            <input id="spotify_client_secret" name="spotify_client_secret" type="password" class="form-control nozomi-input" value="{{ env_values.SPOTIFY_CLIENT_SECRET }}">
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label for="spotify_redirect_uri" class="form-label">Spotify Redirect URI</label>
+          <input id="spotify_redirect_uri" name="spotify_redirect_uri" type="text" class="form-control nozomi-input" value="{{ env_values.SPOTIFY_REDIRECT_URI }}" placeholder="http://127.0.0.1:5000/callback">
+        </div>
+
+        <div class="mb-4">
+          <label for="flask_secret_key" class="form-label">Flask Secret Key</label>
+          <input id="flask_secret_key" name="flask_secret_key" type="text" class="form-control nozomi-input" value="{{ env_values.FLASK_SECRET_KEY }}" placeholder="clave privada para sesiones Flask">
+        </div>
+
+        <div class="d-flex flex-wrap gap-3 align-items-center">
+          <button type="submit" name="action" value="save" class="btn btn-spotify btn-lg">Guardar configuracion</button>
+          <button type="submit" name="action" value="test_config" class="btn btn-outline-light btn-lg">Probar configuracion Spotify</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<section class="content-panel result-panel mt-4">
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Diagnostico</span>
+      <h2 class="section-title mt-2 mb-0">Token</h2>
+    </div>
+    <div class="result-source-pill">
+      <strong>{{ 'OK' if token_status.is_valid else 'REVISA' }}</strong>
+      <span>{{ token_status.message }}</span>
+    </div>
+  </div>
+
+  <div class="result-grid mb-4">
+    <div class="result-stat">
+      <strong>{{ 'si' if token_status.has_access_token else 'no' }}</strong>
+      <span>access token</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ 'si' if token_status.has_refresh_token else 'no' }}</strong>
+      <span>refresh token</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ 'no' if token_status.is_expired else 'si' }}</strong>
+      <span>token activo</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ token_status.expires_label }}</strong>
+      <span>expira en</span>
+    </div>
+  </div>
+
+  <a href="{{ url_for('login') }}" class="btn btn-outline-light">Ir a login Spotify</a>
+</section>
+{% endblock %}

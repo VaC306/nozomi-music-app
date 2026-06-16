@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block title %}Exportar Playlist · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel mb-4">
+  <div class="row g-4 align-items-start">
+    <div class="col-lg-7">
+      <span class="eyebrow">Fase 3 activa</span>
+      <h1 class="section-title mt-3">Exportar playlists a TXT</h1>
+      <p class="panel-copy mt-3 mb-0">
+        Busca entre tus playlists propias y colaborativas, selecciona una y genera un TXT numerado listo para descargar desde la carpeta `exports/`.
+      </p>
+    </div>
+    <div class="col-lg-5">
+      <div class="info-note h-100">
+        <strong>Incluye</strong>
+        <ul class="phase-list mb-0 mt-3">
+          <li>Playlists propias</li>
+          <li>Playlists colaborativas</li>
+          <li>Archivo TXT con formato numerado</li>
+          <li>Descarga directa desde la web</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="row g-4 align-items-start">
+  <div class="col-xl-7">
+    <div class="content-panel h-100 form-panel">
+      <div class="section-heading mb-4">
+        <span class="eyebrow">Selector</span>
+        <h2 class="section-title">Encuentra la playlist que quieres exportar</h2>
+      </div>
+
+      <form method="post" class="playlist-form">
+        <div class="mb-4">
+          <label for="playlist_query" class="form-label">Buscar por nombre</label>
+          <input
+            type="text"
+            class="form-control form-control-lg nozomi-input"
+            id="playlist_query"
+            name="playlist_query"
+            placeholder="Ej. synth, chill, viajes"
+            value="{{ search_query }}"
+          >
+          <div class="form-hint mt-2">Si lo dejas vacio, mostraremos todas las playlists exportables.</div>
+        </div>
+
+        <div class="playlist-picker mb-4">
+          {% if playlists %}
+            {% for playlist in playlists %}
+              <label class="playlist-option">
+                <input type="radio" name="playlist_id" value="{{ playlist.id }}" {% if loop.first %}checked{% endif %}>
+                <span class="playlist-option-body">
+                  <strong>{{ playlist.name }}</strong>
+                  <small>
+                    owner: {{ playlist.owner.display_name or playlist.owner.id }} ·
+                    {{ playlist.tracks.total if playlist.tracks else 0 }} tracks
+                    {% if playlist.collaborative %}· colaborativa{% endif %}
+                  </small>
+                </span>
+              </label>
+            {% endfor %}
+          {% else %}
+            <div class="empty-state compact-empty">
+              <h2>Sin coincidencias</h2>
+              <p class="mb-0">No encontramos playlists exportables con ese filtro.</p>
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="d-flex flex-wrap gap-3">
+          <button type="submit" class="btn btn-spotify btn-lg">Exportar a TXT</button>
+          <a href="{{ url_for('export_playlist') }}" class="btn btn-outline-light btn-lg">Limpiar filtro</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="content-panel h-100 steps-panel">
+      <span class="eyebrow">Flujo</span>
+      <div class="process-step mt-4">
+        <span>01</span>
+        <div>
+          <strong>Filtra rapido</strong>
+          <p class="mb-0">Busca por nombre exacto o parcial para reducir la lista.</p>
+        </div>
+      </div>
+      <div class="process-step">
+        <span>02</span>
+        <div>
+          <strong>Selecciona</strong>
+          <p class="mb-0">Mostramos playlists propias y colaborativas compatibles con exportacion.</p>
+        </div>
+      </div>
+      <div class="process-step mb-0">
+        <span>03</span>
+        <div>
+          <strong>Descarga</strong>
+          <p class="mb-0">Generamos un TXT limpio y lo dejamos accesible desde la app y `exports/`.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if result %}
+<section class="content-panel result-panel mt-4">
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Exportacion completada</span>
+      <h2 class="section-title mt-2 mb-0">{{ result.playlist_name }}</h2>
+    </div>
+    <div class="d-flex flex-wrap gap-3">
+      <a href="{{ url_for('download_export', filename=result.file_name) }}" class="btn btn-spotify">Descargar TXT</a>
+      {% if result.playlist_url %}
+        <a href="{{ result.playlist_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-light">Abrir en Spotify</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="result-grid mb-4">
+    <div class="result-stat">
+      <strong>{{ result.track_count }}</strong>
+      <span>tracks exportadas</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ result.owner_name }}</strong>
+      <span>owner</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ result.file_name }}</strong>
+      <span>archivo generado</span>
+    </div>
+    <div class="result-stat">
+      <strong>TXT</strong>
+      <span>formato numerado</span>
+    </div>
+  </div>
+
+  <div class="result-box">
+    <span class="mini-label">Ruta local</span>
+    <p class="mb-0 mt-3 monospace-meta">{{ result.file_path }}</p>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

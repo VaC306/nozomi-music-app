@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel dashboard-hero mb-4">
+  <div class="row g-4 align-items-end">
+    <div class="col-lg-7">
+      <span class="eyebrow">Dashboard</span>
+      <h1 class="section-title mt-3">{{ snapshot.profile.display_name }}</h1>
+      <p class="panel-copy mt-2 mb-0">Resumen generado desde la base del HTML stats report del CLI.</p>
+    </div>
+    <div class="col-lg-5">
+      <div class="dashboard-meta">
+        <span>{{ snapshot.generated_at }}</span>
+        {% if snapshot.profile.product %}<span>{{ snapshot.profile.product }}</span>{% endif %}
+        {% if snapshot.profile.profile_url %}<a href="{{ snapshot.profile.profile_url }}" target="_blank" rel="noopener noreferrer">Abrir perfil</a>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <form method="get" class="d-flex flex-wrap gap-3 align-items-center mt-4 dashboard-toolbar">
+    <select name="range" class="form-select nozomi-input dashboard-select" onchange="this.form.submit()">
+      {% for key, label in time_range_labels.items() %}
+        <option value="{{ key }}" {% if selected_range == key %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <a class="btn btn-outline-light" href="{{ url_for('dashboard_export', range=selected_range) }}">Exportar HTML</a>
+  </form>
+
+  <div class="result-grid mt-4">
+    <div class="result-stat"><strong>{{ snapshot.summary.playlist_count }}</strong><span>playlists</span></div>
+    <div class="result-stat"><strong>{{ snapshot.summary.recent_count }}</strong><span>recientes</span></div>
+    <div class="result-stat"><strong>{{ snapshot.summary.top_track_count }}</strong><span>tops</span></div>
+    <div class="result-stat"><strong>{{ snapshot.summary.top_genre_count }}</strong><span>generos</span></div>
+  </div>
+</section>
+
+{% if snapshot.warnings %}
+<section class="content-panel mb-4">
+  <span class="eyebrow">Avisos</span>
+  <ul class="issue-list mt-3 mb-0">
+    {% for warning in snapshot.warnings %}
+      <li>{{ warning }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="dashboard-grid mb-4">
+  <div class="content-panel dashboard-card dashboard-card-large">
+    <div class="section-heading mb-3">
+      <div>
+        <span class="eyebrow">Top tracks</span>
+        <h2 class="section-title">{{ time_range_labels[selected_range] }}</h2>
+      </div>
+    </div>
+    <div class="dashboard-list">
+      {% for track in snapshot.top_tracks[selected_range] %}
+        <article class="dashboard-item">
+          <span class="dashboard-rank">{{ track.rank }}</span>
+          {% if track.image_url %}<img src="{{ track.image_url }}" alt="{{ track.name }}" class="dashboard-thumb">{% else %}<div class="dashboard-thumb dashboard-thumb-placeholder">♪</div>{% endif %}
+          <div>
+            <strong>{{ track.name }}</strong>
+            <p>{{ track.artists }}</p>
+          </div>
+          {% if track.spotify_url %}<a href="{{ track.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
+        </article>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="content-panel dashboard-card">
+    <span class="eyebrow">Top artists</span>
+    <div class="dashboard-list mt-3">
+      {% for artist in snapshot.top_artists[selected_range][:4] %}
+        <article class="dashboard-item dashboard-item-compact">
+          <span class="dashboard-rank">{{ artist.rank }}</span>
+          <div>
+            <strong>{{ artist.name }}</strong>
+            <p>{{ artist.genres_label }}</p>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="content-panel dashboard-card">
+    <span class="eyebrow">Generos</span>
+    <div class="sample-chips mt-3">
+      {% for genre, count in snapshot.top_genres %}
+        <span class="genre-chip">{{ genre }} · {{ count }}</span>
+      {% endfor %}
+      {% if not snapshot.top_genres %}
+        <span class="micro-note">Sin datos suficientes.</span>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="content-panel dashboard-card">
+  <div class="section-heading mb-3">
+    <div>
+      <span class="eyebrow">Actividad reciente</span>
+      <h2 class="section-title">Ultimas escuchas</h2>
+    </div>
+  </div>
+  <div class="dashboard-list">
+    {% for track in snapshot.recent_tracks %}
+      <article class="dashboard-item">
+        {% if track.image_url %}<img src="{{ track.image_url }}" alt="{{ track.name }}" class="dashboard-thumb">{% else %}<div class="dashboard-thumb dashboard-thumb-placeholder">♪</div>{% endif %}
+        <div>
+          <strong>{{ track.name }}</strong>
+          <p>{{ track.artists }}</p>
+        </div>
+        <span class="dashboard-context">{{ track.context_type or 'track' }}</span>
+      </article>
+    {% endfor %}
+    {% if not snapshot.recent_tracks %}
+      <p class="micro-note mb-0">No hay actividad reciente disponible.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

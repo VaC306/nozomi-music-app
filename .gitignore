@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.venv/
+venv/
+env/
+instance/
+.pytest_cache/
+.mypy_cache/
+nozomi.db
+exports/*.html
+exports/*.txt
+uploads/*.txt

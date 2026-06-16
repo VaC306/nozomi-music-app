@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block title %}Crear Playlist · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel mb-4">
+  <div class="row g-4 align-items-start">
+    <div class="col-lg-7">
+      <span class="eyebrow">Fase 2 activa</span>
+      <h1 class="section-title mt-3">Crear playlists desde un TXT</h1>
+      <p class="panel-copy mt-3 mb-0">
+        Sube tu archivo, deja que Nozomi Music valide las lineas y crea una playlist privada en tu cuenta usando la logica adaptada desde el proyecto CLI.
+      </p>
+    </div>
+    <div class="col-lg-5">
+      <div class="info-note h-100">
+        <strong>Formato esperado</strong>
+        <ul class="phase-list mb-0 mt-3">
+          {% for item in upload_help %}
+            <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="row g-4 align-items-start">
+  <div class="col-xl-7">
+    <div class="content-panel h-100 form-panel">
+      <div class="section-heading mb-4">
+        <span class="eyebrow">Importador</span>
+        <h2 class="section-title">Sube tu archivo y genera la playlist</h2>
+      </div>
+
+      <form method="post" enctype="multipart/form-data" class="playlist-form">
+        <div class="helper-banner mb-4">
+          <strong>Atajo UX:</strong> si tu TXT viene de una nota o bloc, revisa que cada linea tenga exactamente `Titulo - Artista`.
+        </div>
+        <div class="mb-4">
+          <label for="playlist_name" class="form-label">Nombre de la playlist</label>
+          <input
+            type="text"
+            class="form-control form-control-lg nozomi-input"
+            id="playlist_name"
+            name="playlist_name"
+            placeholder="Ej. Late Night Drift"
+            value="{{ request.form.get('playlist_name', '') }}"
+            required
+          >
+        </div>
+
+        <div class="mb-4">
+          <label for="playlist_file" class="form-label">Archivo TXT</label>
+          <input
+            type="file"
+            class="form-control form-control-lg nozomi-input"
+            id="playlist_file"
+            name="playlist_file"
+            accept=".txt,text/plain"
+            required
+          >
+          <div class="form-hint mt-2">Maximo 2 MB. Una cancion por linea con el formato `Titulo - Artista`.</div>
+        </div>
+
+        <div class="result-box txt-preview-box mb-4" id="txt-preview-box" hidden>
+          <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+            <span class="mini-label">Preview resumida del TXT</span>
+            <span class="micro-note" id="txt-preview-meta">Sin archivo</span>
+          </div>
+          <div class="preview-summary" id="txt-preview-summary"></div>
+          <ul class="issue-list mt-3 mb-0" id="txt-preview-lines"></ul>
+        </div>
+
+        <div class="sample-block mb-4">
+          <span class="mini-label">Ejemplo rapido</span>
+          <pre class="sample-pre mb-0">Midnight City - M83
+Digital Love - Daft Punk
+West Coast - Lana Del Rey</pre>
+        </div>
+
+        <div class="d-flex flex-wrap gap-3 align-items-center">
+          <button type="submit" class="btn btn-spotify btn-lg">Crear playlist en Spotify</button>
+          <span class="micro-note">El proceso puede tardar un poco si Spotify necesita buscar varias canciones.</span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="content-panel h-100 steps-panel">
+      <span class="eyebrow">Como funciona</span>
+      <div class="process-step mt-4">
+        <span>01</span>
+        <div>
+          <strong>Subida segura</strong>
+          <p class="mb-0">Guardamos tu TXT en `uploads/` para procesarlo dentro de la app.</p>
+        </div>
+      </div>
+      <div class="process-step">
+        <span>02</span>
+        <div>
+          <strong>Busqueda y matching</strong>
+          <p class="mb-0">Cada linea se compara contra Spotify para elegir la mejor coincidencia posible.</p>
+        </div>
+      </div>
+      <div class="process-step mb-0">
+        <span>03</span>
+        <div>
+          <strong>Resumen detallado</strong>
+          <p class="mb-0">Mostramos encontradas, no encontradas e invalidas para que puedas corregir rapido.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if result %}
+<section class="content-panel result-panel mt-4">
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Resultado</span>
+      <h2 class="section-title mt-2 mb-0">{{ result.playlist_name }}</h2>
+    </div>
+    {% if result.playlist_url %}
+      <a href="{{ result.playlist_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-light">Abrir en Spotify</a>
+    {% endif %}
+  </div>
+
+  <div class="result-grid mb-4">
+    <div class="result-stat">
+      <strong>{{ result.lines_read }}</strong>
+      <span>lineas leidas</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ result.found_count }}</strong>
+      <span>canciones encontradas</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ result.not_found_count }}</strong>
+      <span>no encontradas</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ result.invalid_count }}</strong>
+      <span>lineas invalidas</span>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-6">
+      <div class="result-box h-100">
+        <span class="mini-label">Archivo procesado</span>
+        <p class="mb-0 mt-3">{{ result.source_file }}</p>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="result-box h-100">
+        <span class="mini-label">Tracks agregadas</span>
+        <p class="mb-0 mt-3">{{ result.tracks_added }}</p>
+      </div>
+    </div>
+
+    {% if result.not_found %}
+      <div class="col-lg-6">
+        <div class="result-box h-100">
+          <span class="mini-label">No encontradas</span>
+          <ul class="issue-list mt-3 mb-0">
+            {% for item in result.not_found %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if result.invalid_lines %}
+      <div class="col-lg-6">
+        <div class="result-box h-100">
+          <span class="mini-label">Lineas invalidas</span>
+          <ul class="issue-list mt-3 mb-0">
+            {% for item in result.invalid_lines %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const fileInput = document.getElementById('playlist_file');
+  const previewBox = document.getElementById('txt-preview-box');
+  const previewMeta = document.getElementById('txt-preview-meta');
+  const previewSummary = document.getElementById('txt-preview-summary');
+  const previewLines = document.getElementById('txt-preview-lines');
+
+  if (fileInput && previewBox && previewMeta && previewSummary && previewLines) {
+    fileInput.addEventListener('change', async (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) {
+        previewBox.hidden = true;
+        return;
+      }
+
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const valid = [];
+      const invalid = [];
+
+      lines.forEach((line) => {
+        if (line.includes(' - ') && line.split(' - ', 2)[0].trim() && line.split(' - ', 2)[1].trim()) {
+          valid.push(line);
+        } else {
+          invalid.push(line);
+        }
+      });
+
+      previewBox.hidden = false;
+      previewMeta.textContent = `${file.name} · ${lines.length} lineas`;
+      previewSummary.innerHTML = `
+        <div class="metric-chip compact-metric"><strong>${valid.length}</strong><span>validas</span></div>
+        <div class="metric-chip compact-metric"><strong>${invalid.length}</strong><span>invalidas</span></div>
+        <div class="metric-chip compact-metric"><strong>${Math.min(lines.length, 5)}</strong><span>preview</span></div>
+      `;
+
+      const previewItems = [...valid.slice(0, 4), ...invalid.slice(0, 1)].slice(0, 5);
+      previewLines.innerHTML = previewItems.map((line) => `<li>${line}</li>`).join('');
+    });
+  }
+</script>
+{% endblock %}

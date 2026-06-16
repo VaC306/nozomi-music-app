@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="hero-panel mb-4 mb-lg-5">
+  <div class="row align-items-center g-4">
+    <div class="col-lg-7">
+      <span class="eyebrow">Nozomi Music</span>
+      <h1 class="display-title mt-3">Spotify tools, sin ruido.</h1>
+      <p class="hero-copy mt-3 mb-4">Importa, exporta, descubre.</p>
+      <div class="d-flex flex-wrap gap-3">
+        <a class="btn btn-spotify btn-lg" href="{{ primary_url }}">{{ primary_label }}</a>
+        <a class="btn btn-outline-light btn-lg" href="{{ secondary_url }}">{{ secondary_label }}</a>
+      </div>
+      <div class="hero-metrics mt-4">
+        <div class="metric-chip">
+          <strong>5</strong>
+          <span>flujos</span>
+        </div>
+        <div class="metric-chip">
+          <strong>Sin BD</strong>
+          <span>simple</span>
+        </div>
+        <div class="metric-chip">
+          <strong>OAuth</strong>
+          <span>Spotify</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="hero-card stat-card h-100 spotlight-card">
+        <span class="mini-label">Flujo</span>
+        <h2 class="spotlight-title mt-3">TXT → Playlist</h2>
+        <div class="status-line mt-3">
+          <strong>01</strong>
+          <span>sube</span>
+        </div>
+        <div class="status-line">
+          <strong>02</strong>
+          <span>valida</span>
+        </div>
+        <div class="status-line">
+          <strong>03</strong>
+          <span>publica</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if spotify_user %}
+  <section class="quick-actions quick-actions-asymmetric mb-4 mb-lg-5">
+    <a class="quick-action-card quick-action-large" href="{{ url_for('create_playlist') }}">
+      <span class="mini-label">TXT → Spotify</span>
+      <strong>Crea una playlist</strong>
+      <p>Sube. Valida. Crea.</p>
+    </a>
+    <a class="quick-action-card" href="{{ url_for('export_playlist') }}">
+      <span class="mini-label">Spotify → TXT</span>
+      <strong>Exporta</strong>
+      <p>Busca y baja.</p>
+    </a>
+    <a class="quick-action-card quick-action-tall" href="{{ url_for('recommendations') }}">
+      <span class="mini-label">Genero</span>
+      <strong>Recomienda</strong>
+      <p>Descubre rapido.</p>
+    </a>
+    <a class="quick-action-card" href="{{ url_for('prompt_generator') }}">
+      <span class="mini-label">IA</span>
+      <strong>Prompts</strong>
+      <p>Copia y pega.</p>
+    </a>
+  </section>
+{% else %}
+  <section class="quick-actions mb-4 mb-lg-5">
+    <a class="quick-action-card quick-action-large" href="{{ url_for('login') }}">
+      <span class="mini-label">Paso 1</span>
+      <strong>Conecta Spotify</strong>
+      <p>Inicia sesion para desbloquear herramientas.</p>
+    </a>
+    <a class="quick-action-card" href="{{ url_for('profile') }}">
+      <span class="mini-label">Paso 2</span>
+      <strong>Configura</strong>
+      <p>Guarda Client ID y Redirect URI.</p>
+    </a>
+    <a class="quick-action-card" href="{{ url_for('prompt_generator') }}">
+      <span class="mini-label">Disponible</span>
+      <strong>Prompts</strong>
+      <p>Usalo sin login.</p>
+    </a>
+  </section>
+{% endif %}
+
+<section>
+  <div class="section-heading mb-4">
+    <span class="eyebrow">Atajos</span>
+    <h2 class="section-title">Lo esencial</h2>
+  </div>
+  <div class="row g-3">
+    {% for feature in (features[:3] if spotify_user else [features[0], features[4]]) %}
+      <div class="col-md-6 {% if loop.first %}col-xl-5{% else %}col-xl-3{% endif %}">
+        <a class="feature-card text-decoration-none h-100 d-block" href="{{ feature.url }}">
+          <div class="d-flex justify-content-between align-items-start gap-3">
+            <h3>{{ feature.title }}</h3>
+            <span class="badge text-bg-dark feature-badge">{{ feature.status }}</span>
+          </div>
+          <p class="mb-0 mt-2">{{ feature.description.split(',')[0].split('.')[0] }}</p>
+        </a>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

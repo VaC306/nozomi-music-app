@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dashboard Export · {{ snapshot.profile.display_name }}</title>
+    <style>
+      body { margin: 0; padding: 32px; font-family: Arial, sans-serif; background: #0c0f0d; color: #f1f5f2; }
+      .wrap { max-width: 1100px; margin: 0 auto; }
+      .panel { background: #151917; border: 1px solid #2a302c; border-radius: 18px; padding: 20px; margin-bottom: 16px; }
+      .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+      .stat, .item { background: #101311; border: 1px solid #232925; border-radius: 14px; padding: 14px; }
+      .list { display: grid; gap: 10px; }
+      .item strong { display: block; margin-bottom: 4px; }
+      .muted { color: #a8b0ab; }
+      .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+      .chip { padding: 8px 12px; border-radius: 999px; background: #101311; border: 1px solid #232925; }
+      @media (max-width: 760px) { .grid { grid-template-columns: 1fr 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="panel">
+        <h1>{{ snapshot.profile.display_name }}</h1>
+        <p class="muted">{{ snapshot.generated_at }} · {{ time_range_labels[selected_range] }}</p>
+      </div>
+      <div class="grid panel">
+        <div class="stat"><strong>{{ snapshot.summary.playlist_count }}</strong><span class="muted">playlists</span></div>
+        <div class="stat"><strong>{{ snapshot.summary.recent_count }}</strong><span class="muted">recientes</span></div>
+        <div class="stat"><strong>{{ snapshot.summary.top_track_count }}</strong><span class="muted">tops</span></div>
+        <div class="stat"><strong>{{ snapshot.summary.top_genre_count }}</strong><span class="muted">generos</span></div>
+      </div>
+      <div class="panel">
+        <h2>Top tracks</h2>
+        <div class="list">
+          {% for track in snapshot.top_tracks[selected_range] %}
+            <div class="item"><strong>{{ track.rank }}. {{ track.name }}</strong><span class="muted">{{ track.artists }}</span></div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Top artists</h2>
+        <div class="list">
+          {% for artist in snapshot.top_artists[selected_range] %}
+            <div class="item"><strong>{{ artist.rank }}. {{ artist.name }}</strong><span class="muted">{{ artist.genres_label }}</span></div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Generos</h2>
+        <div class="chips">
+          {% for genre, count in snapshot.top_genres %}
+            <span class="chip">{{ genre }} · {{ count }}</span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

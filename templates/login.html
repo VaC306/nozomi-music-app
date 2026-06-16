@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Login Spotify · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel narrow-panel">
+  <span class="eyebrow">Spotify OAuth</span>
+  <h1 class="section-title mt-3">Inicia sesion con tu cuenta de Spotify</h1>
+  <p class="panel-copy mt-3">
+    La app usara sesiones Flask para guardar tu access token, refresh token y datos basicos del perfil.
+  </p>
+
+  <div class="info-grid mt-4">
+    <div class="info-item">
+      <strong>Scopes</strong>
+      <span>playlists, top tracks, reproducido recientemente y perfil basico.</span>
+    </div>
+    <div class="info-item">
+      <strong>Callback</strong>
+      <span>Debes registrar exactamente la misma URL configurada en `SPOTIFY_REDIRECT_URI`.</span>
+    </div>
+  </div>
+
+  {% if auth_url %}
+    <div class="mt-4 d-flex flex-wrap gap-3">
+      <a class="btn btn-spotify btn-lg" href="{{ url_for('login', start=1) }}">Continuar con Spotify</a>
+      <a class="btn btn-outline-light btn-lg" href="{{ auth_url }}">Abrir enlace directo</a>
+    </div>
+  {% else %}
+    <div class="empty-state mt-4">
+      <h2>Falta configuracion</h2>
+      <p class="mb-0">Completa `.env` usando `.env.example` y vuelve a cargar la pagina.</p>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

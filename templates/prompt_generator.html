@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}Prompt Generator · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel mb-4">
+  <div class="row g-4 align-items-start">
+    <div class="col-lg-7">
+      <span class="eyebrow">Fase 5 activa</span>
+      <h1 class="section-title mt-3">Prompt generator para IA musical</h1>
+      <p class="panel-copy mt-3 mb-0">
+        Nozomi Music no llama a ninguna IA. Solo construye prompts mas utiles, concretos y listos para pegar en ChatGPT, Claude, Gemini o cualquier otra herramienta.
+      </p>
+    </div>
+    <div class="col-lg-5">
+      <div class="info-note h-100">
+        <strong>Tipos disponibles</strong>
+        <div class="row g-3 mt-1">
+          {% for item in prompt_types %}
+            <div class="col-12">
+              <div class="prompt-type-card">
+                <h3>{{ item.title }}</h3>
+                <p class="mb-0">{{ item.description }}</p>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="row g-4 align-items-start">
+  <div class="col-xl-7">
+    <div class="content-panel h-100 form-panel">
+      <div class="section-heading mb-4">
+        <span class="eyebrow">Constructor</span>
+        <h2 class="section-title">Configura el prompt que quieres generar</h2>
+      </div>
+
+      <form method="post" class="playlist-form">
+        <div class="mb-4">
+          <label for="prompt_type" class="form-label">Tipo de prompt</label>
+          <select id="prompt_type" name="prompt_type" class="form-select form-select-lg nozomi-input">
+            {% for item in prompt_types %}
+              <option value="{{ item.id }}" {% if request.form.get('prompt_type') == item.id %}selected{% endif %}>{{ item.title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-4">
+          <label for="goal" class="form-label">Objetivo principal</label>
+          <textarea id="goal" name="goal" rows="3" class="form-control nozomi-input" placeholder="Ej. Quiero descubrir canciones nocturnas, elegantes y algo melancolicas para una playlist de carretera." required>{{ request.form.get('goal', '') }}</textarea>
+        </div>
+
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label for="genre" class="form-label">Genero o escena</label>
+            <input id="genre" name="genre" type="text" class="form-control nozomi-input" placeholder="Ej. dream-pop, jazz-funk" value="{{ request.form.get('genre', '') }}">
+          </div>
+          <div class="col-md-6">
+            <label for="mood" class="form-label">Mood o atmosfera</label>
+            <input id="mood" name="mood" type="text" class="form-control nozomi-input" placeholder="Ej. nostalgico, elegante, brillante" value="{{ request.form.get('mood', '') }}">
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label for="references" class="form-label">Referencias</label>
+          <textarea id="references" name="references" rows="3" class="form-control nozomi-input" placeholder="Artistas, albums, canciones, escenas o playlists de referencia">{{ request.form.get('references', '') }}</textarea>
+        </div>
+
+        <div class="mb-4">
+          <label for="constraints" class="form-label">Restricciones</label>
+          <textarea id="constraints" name="constraints" rows="3" class="form-control nozomi-input" placeholder="Ej. Evitar hits demasiado obvios, incluir variedad de paises, no repetir artista">{{ request.form.get('constraints', '') }}</textarea>
+        </div>
+
+        <div class="mb-4">
+          <label for="output_language" class="form-label">Idioma de salida</label>
+          <select id="output_language" name="output_language" class="form-select form-select-lg nozomi-input">
+            {% for language in ['espanol', 'ingles', 'bilingue'] %}
+              <option value="{{ language }}" {% if request.form.get('output_language', 'espanol') == language %}selected{% endif %}>{{ language|capitalize }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <button type="submit" class="btn btn-spotify btn-lg">Generar prompt</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="content-panel h-100 steps-panel">
+      <span class="eyebrow">Uso recomendado</span>
+      <div class="process-step mt-4">
+        <span>01</span>
+        <div>
+          <strong>Define el contexto</strong>
+          <p class="mb-0">Cuanto mas claro seas con genero, mood y objetivo, mejor queda el prompt final.</p>
+        </div>
+      </div>
+      <div class="process-step">
+        <span>02</span>
+        <div>
+          <strong>Anade limites utiles</strong>
+          <p class="mb-0">Especifica si quieres evitar obviedades, repetir artistas o centrarte en ciertas escenas.</p>
+        </div>
+      </div>
+      <div class="process-step mb-0">
+        <span>03</span>
+        <div>
+          <strong>Copia y pega</strong>
+          <p class="mb-0">Usa el prompt en tu IA preferida y ajusta detalles si quieres una salida todavia mas precisa.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if result %}
+<section class="content-panel result-panel mt-4">
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Prompt generado</span>
+      <h2 class="section-title mt-2 mb-0">{{ result.title }}</h2>
+    </div>
+    <div class="result-source-pill">
+      <strong>{{ result.summary.idioma }}</strong>
+      <span>idioma de salida</span>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-lg-6">
+      <div class="result-box h-100">
+        <span class="mini-label">Resumen</span>
+        <div class="summary-list mt-3">
+          <p><strong>Objetivo:</strong> {{ result.summary.objetivo }}</p>
+          <p><strong>Genero:</strong> {{ result.summary.genero }}</p>
+          <p><strong>Mood:</strong> {{ result.summary.mood }}</p>
+          <p><strong>Referencias:</strong> {{ result.summary.referencias }}</p>
+          <p class="mb-0"><strong>Restricciones:</strong> {{ result.summary.restricciones }}</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="result-box h-100">
+        <div class="d-flex justify-content-between align-items-center gap-3">
+          <span class="mini-label">Prompt listo para copiar</span>
+          <button type="button" class="btn btn-outline-light btn-sm" data-copy-target="prompt-output">Copiar</button>
+        </div>
+        <textarea id="prompt-output" class="form-control nozomi-input prompt-output mt-3" rows="14" readonly>{{ result.prompt }}</textarea>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

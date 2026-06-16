@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Recommendations · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel mb-4">
+  <div class="row g-4 align-items-start">
+    <div class="col-lg-7">
+      <span class="eyebrow">Fase 4 activa</span>
+      <h1 class="section-title mt-3">Recomendaciones por genero</h1>
+      <p class="panel-copy mt-3 mb-0">
+        Pide un genero, ajusta la cantidad de resultados y deja que Nozomi Music combine el endpoint oficial con un fallback inteligente cuando Spotify se pone restrictivo.
+      </p>
+    </div>
+    <div class="col-lg-5">
+      <div class="info-note h-100">
+        <strong>Generos sugeridos</strong>
+        <div class="sample-chips mt-3">
+          {% for genre in sample_genres %}
+            <a class="genre-chip genre-link" href="{{ url_for('recommendations', genre=genre, limit=selected_limit or 6) }}">{{ genre }}</a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="row g-4 align-items-start">
+  <div class="col-xl-7">
+    <div class="content-panel h-100 form-panel">
+      <div class="section-heading mb-4">
+        <span class="eyebrow">Busqueda</span>
+        <h2 class="section-title">Encuentra nuevas canciones por estilo</h2>
+      </div>
+
+      <form method="get" class="playlist-form">
+        <div class="mb-4">
+          <label for="genre" class="form-label">Genero</label>
+          <input
+            type="text"
+            class="form-control form-control-lg nozomi-input"
+            id="genre"
+            name="genre"
+            placeholder="Ej. dream-pop, techno, city-pop"
+            value="{{ selected_genre or '' }}"
+            required
+          >
+        </div>
+
+        <div class="mb-4">
+          <label for="limit" class="form-label">Cantidad</label>
+          <select id="limit" name="limit" class="form-select form-select-lg nozomi-input">
+            {% for option in [4, 6, 8, 10, 12] %}
+              <option value="{{ option }}" {% if selected_limit == option %}selected{% endif %}>{{ option }} canciones</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="d-flex flex-wrap gap-3">
+          <button type="submit" class="btn btn-spotify btn-lg">Buscar recomendaciones</button>
+          <a href="{{ url_for('recommendations') }}" class="btn btn-outline-light btn-lg">Limpiar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="content-panel h-100 steps-panel">
+      <span class="eyebrow">Motor</span>
+      <div class="process-step mt-4">
+        <span>01</span>
+        <div>
+          <strong>Prueba directa</strong>
+          <p class="mb-0">Intentamos primero el endpoint oficial de recomendaciones por genero.</p>
+        </div>
+      </div>
+      <div class="process-step">
+        <span>02</span>
+        <div>
+          <strong>Fallback</strong>
+          <p class="mb-0">Si Spotify limita ese endpoint, buscamos artistas del genero y extraemos sus top tracks.</p>
+        </div>
+      </div>
+      <div class="process-step mb-0">
+        <span>03</span>
+        <div>
+          <strong>Curado final</strong>
+          <p class="mb-0">Quitamos duplicados y te devolvemos una seleccion mas limpia para explorar.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if result %}
+<section class="content-panel result-panel mt-4">
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Resultado</span>
+      <h2 class="section-title mt-2 mb-0">{{ result.genre }}</h2>
+    </div>
+    <div class="result-source-pill">
+      <strong>{{ result.count }}</strong>
+      <span>{{ 'fallback por artistas' if result.source == 'artist-fallback' else 'endpoint principal' }}</span>
+    </div>
+  </div>
+
+  <div class="recommendation-grid">
+    {% for track in result.tracks %}
+      <article class="track-card">
+        <div class="track-media">
+          {% if track.image %}
+            <img src="{{ track.image }}" alt="{{ track.name }}" class="track-cover">
+          {% else %}
+            <div class="track-cover placeholder-cover">♪</div>
+          {% endif %}
+        </div>
+        <div class="track-body">
+          <span class="mini-label">{{ result.genre }}</span>
+          <h3>{{ track.name }}</h3>
+          <p class="track-meta">{{ track.artists }}</p>
+          {% if track.album %}
+            <p class="track-submeta">Album: {{ track.album }}</p>
+          {% endif %}
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            {% if track.url %}
+              <a href="{{ track.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-spotify btn-sm">Abrir en Spotify</a>
+            {% endif %}
+            {% if track.preview_url %}
+              <a href="{{ track.preview_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-light btn-sm">Preview</a>
+            {% endif %}
+          </div>
+        </div>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
