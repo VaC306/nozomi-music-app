@@ -20,7 +20,6 @@ from services.stats_service import StatsService, TIME_RANGE_LABELS
 
 
 BASE_DIR = Path(__file__).resolve().parent
-ENV_PATH = BASE_DIR / ".env"
 load_dotenv(BASE_DIR / ".env")
 
 
@@ -55,6 +54,14 @@ def create_app() -> Flask:
     with app.app_context():
         db.create_all()
 
+        persisted_settings = AppSettings.query.get(1)
+        if persisted_settings:
+            if persisted_settings.flask_secret_key.strip():
+                app.config["SECRET_KEY"] = persisted_settings.flask_secret_key.strip()
+            app.config["SPOTIFY_CLIENT_ID"] = persisted_settings.spotify_client_id.strip()
+            app.config["SPOTIFY_CLIENT_SECRET"] = persisted_settings.spotify_client_secret.strip()
+            app.config["SPOTIFY_REDIRECT_URI"] = persisted_settings.spotify_redirect_uri.strip()
+
     def load_env_values() -> dict[str, str]:
         db_settings = AppSettings.query.get(1)
         values = {
@@ -66,16 +73,6 @@ def create_app() -> Flask:
         return values
 
     def save_env_values(values: dict[str, str]) -> None:
-        content = "\n".join(
-            [
-                f"FLASK_SECRET_KEY={values.get('FLASK_SECRET_KEY', '').strip()}",
-                f"SPOTIFY_CLIENT_ID={values.get('SPOTIFY_CLIENT_ID', '').strip()}",
-                f"SPOTIFY_CLIENT_SECRET={values.get('SPOTIFY_CLIENT_SECRET', '').strip()}",
-                f"SPOTIFY_REDIRECT_URI={values.get('SPOTIFY_REDIRECT_URI', '').strip()}",
-            ]
-        ) + "\n"
-        ENV_PATH.write_text(content, encoding="utf-8")
-
         for key, value in values.items():
             os.environ[key] = value.strip()
 
@@ -578,7 +575,7 @@ def create_app() -> Flask:
                 except (SpotifyAuthError, SpotifyClientError) as exc:
                     flash(str(exc), "danger")
             else:
-                flash("Configuracion guardada en .env correctamente.", "success")
+                flash("Configuracion guardada correctamente en PostgreSQL.", "success")
 
         env_values = load_env_values()
         token_status = get_token_status()
