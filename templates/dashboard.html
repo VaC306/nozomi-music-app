@@ -63,6 +63,7 @@
           <div>
             <strong>{{ track.name }}</strong>
             <p>{{ track.artists }}</p>
+            <p class="micro-note mb-0">{{ track.genres_label }}</p>
           </div>
           {% if track.spotify_url %}<a href="{{ track.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
         </article>
@@ -112,6 +113,7 @@
         <div>
           <strong>{{ track.name }}</strong>
           <p>{{ track.artists }}</p>
+          <p class="micro-note mb-0">{{ track.genres_label }}</p>
         </div>
         <span class="dashboard-context">{{ track.played_at_label }}{% if track.context_type %} · {{ track.context_type }}{% endif %}</span>
       </article>

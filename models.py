@@ -23,3 +23,32 @@ class SpotifyUser(db.Model):
     redirect_uri = db.Column(db.Text, nullable=False, default="")
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ArtistGenresCache(db.Model):
+    __tablename__ = "artist_genres_cache"
+
+    id = db.Column(db.Integer, primary_key=True)
+    artist_id = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    artist_name = db.Column(db.String(255), nullable=False, default="")
+    genres_json = db.Column(db.Text, nullable=False, default="[]")
+    popularity = db.Column(db.Integer, nullable=False, default=0)
+    fetched_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SpotifyApiCache(db.Model):
+    __tablename__ = "spotify_api_cache"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cache_scope = db.Column(db.String(255), nullable=False, index=True, default="app")
+    cache_key = db.Column(db.String(512), nullable=False, index=True)
+    source_endpoint = db.Column(db.String(255), nullable=False, default="")
+    payload_json = db.Column(db.Text, nullable=False, default="null")
+    fetched_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("cache_scope", "cache_key", name="uq_spotify_api_cache_scope_key"),
+    )

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import os
+import threading
 import time
 from typing import Any
 from urllib.parse import quote
@@ -16,10 +18,22 @@ class SpotifyAuthError(SpotifyClientError):
     """Raised when Spotify OAuth fails."""
 
 
+class SpotifyRateLimitError(SpotifyClientError):
+    """Raised when Spotify rate limiting is active."""
+
+    def __init__(self, message: str, retry_after_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
 class SpotifyClient:
     API_BASE_URL = "https://api.spotify.com/v1"
     AUTH_URL = "https://accounts.spotify.com/authorize"
     TOKEN_URL = "https://accounts.spotify.com/api/token"
+    _MAX_CONCURRENT_REQUESTS = max(int(os.getenv("SPOTIFY_MAX_CONCURRENT_REQUESTS", "2") or 2), 1)
+    _REQUEST_SEMAPHORE = threading.BoundedSemaphore(value=_MAX_CONCURRENT_REQUESTS)
+    _RATE_LIMIT_LOCK = threading.Lock()
+    _RATE_LIMITED_UNTIL = 0.0
 
     def __init__(self, client_id: str, client_secret: str, redirect_uri: str, scopes: list[str]) -> None:
         self.client_id = client_id
@@ -27,6 +41,7 @@ class SpotifyClient:
         self.redirect_uri = redirect_uri
         self.scopes = scopes
         self.session = requests.Session()
+        self.spotify_call_count = 0
 
     def build_authorization_url(self, state: str) -> str:
         scopes = quote(" ".join(self.scopes))
@@ -102,10 +117,24 @@ class SpotifyClient:
     def get_artist(self, access_token: str, artist_id: str) -> dict[str, Any]:
         return self.request(access_token, "GET", f"/artists/{artist_id}")
 
+    def get_artists(self, access_token: str, artist_ids: list[str]) -> list[dict[str, Any]]:
+        if not artist_ids:
+            return []
+        data = self.request(
+            access_token,
+            "GET",
+            "/artists",
+            params={"ids": ",".join(artist_ids[:50])},
+        )
+        return data.get("artists", [])
+
     def get_user_playlists(self, access_token: str) -> list[dict[str, Any]]:
         playlists: list[dict[str, Any]] = []
         endpoint = "/me/playlists"
-        params: dict[str, Any] | None = {"limit": 50}
+        params: dict[str, Any] | None = {
+            "limit": 50,
+            "fields": "items(id,name,owner(display_name,id),tracks(total),collaborative,external_urls(spotify)),next",
+        }
 
         while endpoint:
             data = self.request(access_token, "GET", endpoint, params=params)
@@ -116,6 +145,24 @@ class SpotifyClient:
             endpoint = next_url.replace(self.API_BASE_URL, "")
             params = None
         return playlists
+
+    def get_playlist(self, access_token: str, playlist_id: str) -> dict[str, Any]:
+        return self.request(
+            access_token,
+            "GET",
+            f"/playlists/{playlist_id}",
+            params={"fields": "id,name,owner(display_name,id),tracks(total),collaborative,external_urls(spotify)"},
+        )
+
+    def get_playlist_track_count(self, access_token: str, playlist_id: str) -> int:
+        data = self.request(
+            access_token,
+            "GET",
+            f"/playlists/{playlist_id}/items",
+            params={"limit": 1, "offset": 0},
+        )
+        total = data.get("total", 0)
+        return total if isinstance(total, int) else 0
 
     def get_playlist_tracks(self, access_token: str, playlist_id: str) -> list[dict[str, Any]]:
         tracks: list[dict[str, Any]] = []
@@ -164,12 +211,41 @@ class SpotifyClient:
         )
         return data.get("tracks", [])
 
+    def get_recommendations(
+        self,
+        access_token: str,
+        seed_artists: list[str] | None = None,
+        seed_genres: list[str] | None = None,
+        seed_tracks: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit}
+        if seed_artists:
+            params["seed_artists"] = ",".join(seed_artists[:5])
+        if seed_genres:
+            params["seed_genres"] = ",".join(seed_genres[:5])
+        if seed_tracks:
+            params["seed_tracks"] = ",".join(seed_tracks[:5])
+        if len(params) == 1:
+            return []
+        data = self.request(access_token, "GET", "/recommendations", params=params)
+        return data.get("tracks", [])
+
     def search_artists_by_genre(self, access_token: str, genre: str, limit: int = 5) -> list[dict[str, Any]]:
         data = self.request(
             access_token,
             "GET",
             "/search",
             params={"q": f'genre:"{genre}"', "type": "artist", "limit": limit},
+        )
+        return data.get("artists", {}).get("items", [])
+
+    def search_artists(self, access_token: str, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        data = self.request(
+            access_token,
+            "GET",
+            "/search",
+            params={"q": query, "type": "artist", "limit": limit},
         )
         return data.get("artists", {}).get("items", [])
 
@@ -237,19 +313,23 @@ class SpotifyClient:
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        self._raise_if_rate_limited()
         url = endpoint if endpoint.startswith("http") else f"{self.API_BASE_URL}{endpoint}"
         headers = {"Authorization": f"Bearer {access_token}"}
-        try:
-            response = self.session.request(
-                method=method,
-                url=url,
-                headers=headers,
-                params=params,
-                json=json_body,
-                timeout=30,
-            )
-        except requests.RequestException as exc:
-            raise SpotifyClientError("No se pudo conectar con Spotify.") from exc
+        with self._REQUEST_SEMAPHORE:
+            self._raise_if_rate_limited()
+            self.spotify_call_count += 1
+            try:
+                response = self.session.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    params=params,
+                    json=json_body,
+                    timeout=30,
+                )
+            except requests.RequestException as exc:
+                raise SpotifyClientError("No se pudo conectar con Spotify.") from exc
 
         if response.status_code >= 400:
             self._raise_api_error(response)
@@ -288,8 +368,8 @@ class SpotifyClient:
         raw = f"{self.client_id}:{self.client_secret}".encode("utf-8")
         return f"Basic {base64.b64encode(raw).decode('utf-8')}"
 
-    @staticmethod
-    def _raise_api_error(response: requests.Response) -> None:
+    @classmethod
+    def _raise_api_error(cls, response: requests.Response) -> None:
         message = "Error al comunicarse con Spotify."
         try:
             data = response.json()
@@ -304,12 +384,48 @@ class SpotifyClient:
         if response.status_code == 401:
             raise SpotifyAuthError("La sesion de Spotify ya no es valida. Vuelve a iniciar sesion.")
         if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After", "").strip()
-            detail = f" Intenta de nuevo en {retry_after} segundos." if retry_after.isdigit() else ""
-            raise SpotifyClientError(f"Spotify limito temporalmente las solicitudes.{detail}")
+            retry_after = cls._parse_retry_after(response.headers.get("Retry-After", ""))
+            cls._activate_rate_limit(retry_after)
+            detail = (
+                f" Intenta de nuevo en {retry_after} segundos."
+                if isinstance(retry_after, int) and retry_after > 0
+                else " Espera un momento antes de volver a intentarlo."
+            )
+            raise SpotifyRateLimitError(
+                f"Spotify esta recibiendo demasiadas solicitudes ahora mismo y pausamos las llamadas para proteger la app.{detail}",
+                retry_after_seconds=retry_after,
+            )
         if response.status_code >= 500:
             raise SpotifyClientError("Spotify no esta respondiendo correctamente en este momento.")
         raise SpotifyClientError(message)
+
+    @classmethod
+    def _activate_rate_limit(cls, retry_after_seconds: int | None) -> None:
+        wait_seconds = retry_after_seconds if isinstance(retry_after_seconds, int) and retry_after_seconds > 0 else 60
+        with cls._RATE_LIMIT_LOCK:
+            cls._RATE_LIMITED_UNTIL = max(cls._RATE_LIMITED_UNTIL, time.time() + wait_seconds)
+
+    @classmethod
+    def _raise_if_rate_limited(cls) -> None:
+        with cls._RATE_LIMIT_LOCK:
+            remaining_seconds = int(max(cls._RATE_LIMITED_UNTIL - time.time(), 0))
+            if remaining_seconds <= 0:
+                cls._RATE_LIMITED_UNTIL = 0.0
+                return
+        raise SpotifyRateLimitError(
+            (
+                "Spotify sigue aplicando rate limit. "
+                f"Esperamos {remaining_seconds} segundos antes de volver a llamar para evitar mas bloqueos."
+            ),
+            retry_after_seconds=remaining_seconds,
+        )
+
+    @staticmethod
+    def _parse_retry_after(value: str) -> int | None:
+        raw_value = value.strip()
+        if not raw_value.isdigit():
+            return None
+        return int(raw_value)
 
     @staticmethod
     def _raise_auth_error(response: requests.Response) -> None:

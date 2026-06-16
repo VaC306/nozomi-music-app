@@ -8,7 +8,7 @@
     <div class="col-lg-7">
       <span class="eyebrow">Perfil y setup</span>
       <h1 class="section-title mt-3">Configura Spotify y valida tu sesion</h1>
-      <p class="panel-copy mt-3 mb-0">Variables desde Railway. No se necesita formulario.</p>
+      <p class="panel-copy mt-3 mb-0">Ahora puedes mandar desde aqui tu user de Developers y tu correo para que llegue directo al webhook de Discord.</p>
     </div>
     <div class="col-lg-5">
       <div class="info-note h-100">
@@ -18,6 +18,68 @@
           <p><strong>Client Secret:</strong> {{ 'configurado' if env_values.SPOTIFY_CLIENT_SECRET else 'pendiente' }}</p>
           <p><strong>Redirect URI:</strong> {{ env_values.SPOTIFY_REDIRECT_URI or 'pendiente' }}</p>
           <p class="mb-0"><strong>Sesion:</strong> {{ 'valida' if token_status.is_valid else 'sin validar' }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="row g-4 align-items-start mb-4">
+  <div class="col-xl-7">
+    <div class="content-panel form-panel h-100">
+      <span class="eyebrow">Solicitud Developers</span>
+      <h2 class="section-title mt-2">Envia tu acceso</h2>
+      <p class="panel-copy mt-3">Completa los dos datos y Nozomi enviara el aviso a Discord para que puedas meterlos despues en Spotify Developers.</p>
+
+      <form method="post" class="playlist-form mt-4">
+        <div class="mb-3">
+          <label class="form-label" for="developer_username">Usuario de Developers</label>
+          <input
+            type="text"
+            class="form-control nozomi-input"
+            id="developer_username"
+            name="developer_username"
+            value="{{ developer_form.username }}"
+            placeholder="ej. nozomi-team"
+            autocomplete="username"
+            required
+          >
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label" for="developer_email">Correo</label>
+          <input
+            type="email"
+            class="form-control nozomi-input"
+            id="developer_email"
+            name="developer_email"
+            value="{{ developer_form.email }}"
+            placeholder="tu@correo.com"
+            autocomplete="email"
+            required
+          >
+        </div>
+
+        <button type="submit" class="btn btn-spotify">Enviar a Discord</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="content-panel request-side-panel h-100">
+      <span class="eyebrow">Que se envia</span>
+      <div class="request-preview mt-3">
+        <div class="request-preview-row">
+          <strong>User</strong>
+          <span>Tu nombre de acceso en Developers</span>
+        </div>
+        <div class="request-preview-row">
+          <strong>Correo</strong>
+          <span>El email que quieres usar en la invitacion</span>
+        </div>
+        <div class="request-preview-row mb-0">
+          <strong>Destino</strong>
+          <span>Webhook conectado a Discord</span>
         </div>
       </div>
     </div>
@@ -75,5 +137,4 @@
   <a href="{{ url_for('login') }}" class="btn btn-outline-light">Ir a login Spotify</a>
 </section>
 {% endblock %}
-
 

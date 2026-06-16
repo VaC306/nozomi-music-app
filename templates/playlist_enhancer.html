@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+
+{% block title %}Mejorador de Playlists · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel mb-4">
+  <div class="row g-4 align-items-start">
+    <div class="col-lg-7">
+      <span class="eyebrow">Playlist lab</span>
+      <h1 class="section-title mt-3">Mejorador de playlists</h1>
+      <p class="panel-copy mt-3 mb-0">
+        Selecciona una playlist y deja que Nozomi revise artistas, generos y popularidad para proponerte que sumar, que recortar y como ordenarla mejor.
+      </p>
+    </div>
+    <div class="col-lg-5">
+      <div class="info-note h-100">
+        <strong>Analiza</strong>
+        <ul class="phase-list mb-0 mt-3">
+          <li>artistas repetidos y dominantes</li>
+          <li>generos que sostienen el mood</li>
+          <li>popularidad media y outliers</li>
+          <li>orden sugerido para abrir y cerrar mejor</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="row g-4 align-items-start">
+  <div class="col-xl-7">
+    <div class="content-panel h-100 form-panel">
+      <div class="section-heading mb-4">
+        <span class="eyebrow">Selector</span>
+        <h2 class="section-title">Elige la playlist que quieres pulir</h2>
+      </div>
+
+      <form method="post" class="playlist-form">
+        <div class="mb-4">
+          <label for="playlist_query" class="form-label">Buscar por nombre</label>
+          <input
+            type="text"
+            class="form-control form-control-lg nozomi-input"
+            id="playlist_query"
+            name="playlist_query"
+            placeholder="Ej. warmup, gym, city pop"
+            value="{{ search_query }}"
+          >
+          <div class="form-hint mt-2">El filtro es instantaneo para elegir mas rapido.</div>
+        </div>
+
+        <div class="playlist-picker mb-4" id="playlist-picker">
+          {% if playlists %}
+            {% for playlist in playlists %}
+              <label class="playlist-option" data-playlist-name="{{ playlist.search_text }}">
+                <input type="radio" name="playlist_id" value="{{ playlist.id }}" {% if playlist.id == selected_playlist_id or (not selected_playlist_id and loop.first) %}checked{% endif %}>
+                <span class="playlist-option-body">
+                  <strong>{{ playlist.name }}</strong>
+                  <small>
+                    owner: {{ playlist.owner_name }} · {{ playlist.track_total }} tracks
+                    {% if playlist.collaborative %}· colaborativa{% endif %}
+                  </small>
+                </span>
+              </label>
+            {% endfor %}
+          {% else %}
+            <div class="empty-state compact-empty" id="playlist-empty-state">
+              <h2>Sin coincidencias</h2>
+              <p class="mb-0">No encontramos playlists disponibles para analizar.</p>
+            </div>
+          {% endif %}
+        </div>
+
+        {% if playlists %}
+          <div class="empty-state compact-empty" id="playlist-filter-empty" hidden>
+            <h2>Sin coincidencias</h2>
+            <p class="mb-0">No hay playlists visibles con ese filtro en tiempo real.</p>
+          </div>
+        {% endif %}
+
+        <div class="d-flex flex-wrap gap-3">
+          <button type="submit" class="btn btn-spotify btn-lg">Analizar playlist</button>
+          <a href="{{ url_for('playlist_enhancer') }}" class="btn btn-outline-light btn-lg">Limpiar filtro</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="content-panel h-100 steps-panel">
+      <span class="eyebrow">Motor</span>
+      <div class="process-step mt-4">
+        <span>01</span>
+        <div>
+          <strong>Radiografia</strong>
+          <p class="mb-0">Leemos tracks, artistas, generos y popularidad para detectar el patron real.</p>
+        </div>
+      </div>
+      <div class="process-step">
+        <span>02</span>
+        <div>
+          <strong>Curado</strong>
+          <p class="mb-0">Marcamos duplicados y outliers que debilitan la coherencia de la playlist.</p>
+        </div>
+      </div>
+      <div class="process-step mb-0">
+        <span>03</span>
+        <div>
+          <strong>Propuesta</strong>
+          <p class="mb-0">Sugerimos incorporaciones y un orden mas fluido para la escucha.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if report %}
+<section class="content-panel result-panel mt-4">
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Reporte</span>
+      <h2 class="section-title mt-2 mb-0">{{ report.playlist.name }}</h2>
+    </div>
+    <div class="d-flex flex-wrap gap-3">
+      {% if report.playlist.spotify_url %}
+        <a href="{{ report.playlist.spotify_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-light">Abrir en Spotify</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="result-grid mb-4">
+    <div class="result-stat"><strong>{{ report.stats.track_count }}</strong><span>tracks</span></div>
+    <div class="result-stat"><strong>{{ report.stats.average_popularity }}</strong><span>popularidad media</span></div>
+    <div class="result-stat"><strong>{{ report.stats.unique_artist_count }}</strong><span>artistas</span></div>
+    <div class="result-stat"><strong>{{ report.stats.duration_label }}</strong><span>duracion</span></div>
+  </div>
+
+  <div class="enhancer-grid">
+    <article class="result-box enhancer-card">
+      <span class="mini-label">Estadisticas</span>
+      <div class="sample-chips mt-3 mb-3">
+        <span class="genre-chip">{{ report.stats.high_popularity_count }} altas</span>
+        <span class="genre-chip">{{ report.stats.medium_popularity_count }} medias</span>
+        <span class="genre-chip">{{ report.stats.low_popularity_count }} bajas</span>
+        <span class="genre-chip">{{ report.stats.duplicate_count }} duplicadas</span>
+      </div>
+      <div class="enhancer-meta-grid">
+        <div>
+          <strong>Top artistas</strong>
+          <ul class="issue-list mt-2 mb-0">
+            {% for artist in report.stats.top_artists %}
+              <li>{{ artist.name }} · {{ artist.count }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div>
+          <strong>Top generos</strong>
+          <ul class="issue-list mt-2 mb-0">
+            {% for genre in report.stats.top_genres %}
+              <li>{{ genre.name }} · {{ genre.count }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <article class="result-box enhancer-card">
+      <span class="mini-label">Canciones para anadir</span>
+      {% if report.recommendations_to_add %}
+        <div class="enhancer-track-list mt-3">
+          {% for track in report.recommendations_to_add %}
+            <div class="enhancer-track-item">
+              <div>
+                <strong>{{ track.name }}</strong>
+                <p class="mb-1">{{ track.artists }}</p>
+                <p class="micro-note mb-0">{{ track.reason }}</p>
+              </div>
+              <div class="text-end">
+                <span class="enhancer-popularity">{{ track.popularity }}</span>
+                {% if track.spotify_url %}<a href="{{ track.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="micro-note mt-3 mb-0">No hubo sugerencias claras para sumar sin forzar el perfil actual.</p>
+      {% endif %}
+    </article>
+
+    <article class="result-box enhancer-card">
+      <span class="mini-label">Canciones que sobran</span>
+      {% if report.recommendations_to_remove %}
+        <div class="enhancer-track-list mt-3">
+          {% for track in report.recommendations_to_remove %}
+            <div class="enhancer-track-item">
+              <div>
+                <strong>{{ track.name }}</strong>
+                <p class="mb-1">{{ track.artists }}</p>
+                <p class="micro-note mb-0">{{ track.reason }}</p>
+              </div>
+              <div class="text-end">
+                <span class="enhancer-popularity">#{{ track.position }}</span>
+                {% if track.spotify_url %}<a href="{{ track.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="micro-note mt-3 mb-0">No detectamos recortes evidentes: la playlist se ve bastante cohesionada.</p>
+      {% endif %}
+    </article>
+
+    <article class="result-box enhancer-card enhancer-card-wide">
+      <span class="mini-label">Mejor orden</span>
+      <p class="micro-note mt-3 mb-3">{{ report.ordering.strategy }}</p>
+      <div class="enhancer-order-list">
+        {% for track in report.ordering.preview %}
+          <div class="enhancer-order-item">
+            <span>{{ "%02d"|format(track.position) }}</span>
+            <div>
+              <strong>{{ track.name }}</strong>
+              <p class="mb-1">{{ track.artists }}</p>
+              <p class="micro-note mb-0">{{ track.reason }}</p>
+            </div>
+            {% if track.spotify_url %}<a href="{{ track.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      {% if report.ordering.remaining_count %}
+        <p class="micro-note mt-3 mb-0">Mostramos las primeras {{ report.ordering.preview_count }} posiciones. Quedan {{ report.ordering.remaining_count }} tracks por recolocar siguiendo la misma logica.</p>
+      {% endif %}
+    </article>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const queryInput = document.getElementById('playlist_query');
+  const playlistOptions = Array.from(document.querySelectorAll('.playlist-option[data-playlist-name]'));
+  const liveEmpty = document.getElementById('playlist-filter-empty');
+
+  if (queryInput && playlistOptions.length) {
+    const applyPlaylistFilter = () => {
+      const query = queryInput.value.trim().toLowerCase();
+      let visibleCount = 0;
+
+      playlistOptions.forEach((option) => {
+        const haystack = option.dataset.playlistName || '';
+        const visible = !query || haystack.includes(query);
+        option.hidden = !visible;
+        if (visible) {
+          visibleCount += 1;
+        }
+      });
+
+      if (liveEmpty) {
+        liveEmpty.hidden = visibleCount > 0;
+      }
+
+      const checkedVisible = playlistOptions.find((option) => !option.hidden && option.querySelector('input')?.checked);
+      if (!checkedVisible) {
+        const firstVisible = playlistOptions.find((option) => !option.hidden);
+        const radio = firstVisible?.querySelector('input');
+        if (radio) {
+          radio.checked = true;
+        }
+      }
+    };
+
+    queryInput.addEventListener('input', applyPlaylistFilter);
+    applyPlaylistFilter();
+  }
+</script>
+{% endblock %}

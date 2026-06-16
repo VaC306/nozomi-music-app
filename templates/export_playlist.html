@@ -51,13 +51,13 @@
         <div class="playlist-picker mb-4" id="playlist-picker">
           {% if playlists %}
             {% for playlist in playlists %}
-              <label class="playlist-option" data-playlist-name="{{ playlist.name|lower }} {{ (playlist.owner.display_name or playlist.owner.id)|lower }}">
-                <input type="radio" name="playlist_id" value="{{ playlist.id }}" {% if loop.first %}checked{% endif %}>
+              <label class="playlist-option" data-playlist-name="{{ playlist.search_text }}">
+                <input type="radio" name="playlist_id" value="{{ playlist.id }}" {% if playlist.id == selected_playlist_id or (not selected_playlist_id and loop.first) %}checked{% endif %}>
                 <span class="playlist-option-body">
                   <strong>{{ playlist.name }}</strong>
                   <small>
-                    owner: {{ playlist.owner.display_name or playlist.owner.id }} ·
-                    {{ playlist.tracks.total if playlist.tracks else 0 }} tracks
+                    owner: {{ playlist.owner_name }} ·
+                    {{ playlist.track_total }} tracks
                     {% if playlist.collaborative %}· colaborativa{% endif %}
                   </small>
                 </span>

@@ -15,7 +15,7 @@
       </div>
       <div class="hero-metrics mt-4">
         <div class="metric-chip">
-          <strong>5</strong>
+          <strong>6</strong>
           <span>flujos</span>
         </div>
         <div class="metric-chip">
@@ -61,10 +61,15 @@
       <strong>Exporta</strong>
       <p>Busca y baja.</p>
     </a>
+    <a class="quick-action-card" href="{{ url_for('playlist_enhancer') }}">
+      <span class="mini-label">Playlist</span>
+      <strong>Mejora</strong>
+      <p>Analiza y ordena.</p>
+    </a>
     <a class="quick-action-card quick-action-tall" href="{{ url_for('recommendations') }}">
-      <span class="mini-label">Genero</span>
+      <span class="mini-label">Artista</span>
       <strong>Recomienda</strong>
-      <p>Descubre rapido.</p>
+      <p>Explora afinidad.</p>
     </a>
     <a class="quick-action-card" href="{{ url_for('prompt_generator') }}">
       <span class="mini-label">IA</span>
@@ -98,7 +103,7 @@
     <h2 class="section-title">Lo esencial</h2>
   </div>
   <div class="row g-3">
-    {% for feature in (features[:3] if spotify_user else [features[0], features[4]]) %}
+    {% for feature in (signed_in_feature_cards if spotify_user else public_feature_cards) %}
       <div class="col-md-6 {% if loop.first %}col-xl-5{% else %}col-xl-3{% endif %}">
         <a class="feature-card text-decoration-none h-100 d-block" href="{{ feature.url }}">
           <div class="d-flex justify-content-between align-items-start gap-3">

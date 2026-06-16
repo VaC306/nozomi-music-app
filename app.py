@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from datetime import datetime
@@ -8,11 +9,14 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
+import requests
+from sqlalchemy import inspect, text
 
 from models import SpotifyUser, db
 from services.dashboard_report import DashboardReportBuilder
+from services.playlist_enhancer import PlaylistEnhancer
 from services.playlist_manager import PlaylistImportError, PlaylistManager
 from services.prompt_generator import PromptGenerator, PromptGeneratorError
 from services.recommender import Recommender
@@ -22,11 +26,52 @@ from services.stats_service import StatsService, TIME_RANGE_LABELS
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+DOTENV_VALUES = {key: (value or "").strip() for key, value in dotenv_values(BASE_DIR / ".env").items()}
+logging.basicConfig(level=logging.INFO)
+
+
+def is_running_on_railway() -> bool:
+    return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
+
+
+def get_config_value(key: str, default: str = "") -> str:
+    if not is_running_on_railway() and DOTENV_VALUES.get(key, "").strip():
+        return DOTENV_VALUES[key].strip()
+    return os.getenv(key, default).strip()
 
 
 def create_app() -> Flask:
+    def ensure_artist_cache_schema() -> None:
+        inspector = inspect(db.engine)
+        if "artist_genres_cache" not in inspector.get_table_names():
+            return
+
+        existing_columns = {column["name"] for column in inspector.get_columns("artist_genres_cache")}
+        statements: list[str] = []
+        dialect_name = db.engine.dialect.name.lower()
+
+        if "popularity" not in existing_columns:
+            statements.append("ALTER TABLE artist_genres_cache ADD COLUMN popularity INTEGER NOT NULL DEFAULT 0")
+
+        if "fetched_at" not in existing_columns:
+            timestamp_type = "TIMESTAMP" if dialect_name == "postgresql" else "DATETIME"
+            statements.append(
+                f"ALTER TABLE artist_genres_cache ADD COLUMN fetched_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP"
+            )
+            if "updated_at" in existing_columns:
+                statements.append(
+                    "UPDATE artist_genres_cache SET fetched_at = updated_at WHERE fetched_at IS NULL"
+                )
+
+        if not statements:
+            return
+
+        with db.engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+
     app = Flask(__name__)
-    app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
+    app.config["SECRET_KEY"] = get_config_value("FLASK_SECRET_KEY", secrets.token_hex(32))
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
     app.config["UPLOAD_FOLDER"] = str(BASE_DIR / "uploads")
     app.config["EXPORT_FOLDER"] = str(BASE_DIR / "exports")
@@ -35,9 +80,13 @@ def create_app() -> Flask:
         database_url = database_url.replace("postgres://", "postgresql://", 1)
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url or f"sqlite:///{BASE_DIR / 'nozomi.db'}"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["SPOTIFY_CLIENT_ID"] = os.getenv("SPOTIFY_CLIENT_ID", "").strip()
-    app.config["SPOTIFY_CLIENT_SECRET"] = os.getenv("SPOTIFY_CLIENT_SECRET", "").strip()
-    app.config["SPOTIFY_REDIRECT_URI"] = os.getenv("SPOTIFY_REDIRECT_URI", "").strip()
+    app.config["SPOTIFY_CLIENT_ID"] = get_config_value("SPOTIFY_CLIENT_ID")
+    app.config["SPOTIFY_CLIENT_SECRET"] = get_config_value("SPOTIFY_CLIENT_SECRET")
+    app.config["SPOTIFY_REDIRECT_URI"] = get_config_value("SPOTIFY_REDIRECT_URI")
+    app.config["DEVELOPER_WEBHOOK_URL"] = get_config_value(
+        "DEVELOPER_WEBHOOK_URL",
+        "https://discord.com/api/webhooks/1516529826100674632/UliZM12aUSl--BjxieOGtVTbrYkyZwYtcSBjztJKPbLtBI96_ax-ol91bSNVjRjVpSYs",
+    )
     app.config["SPOTIFY_SCOPES"] = [
         "playlist-modify-public",
         "playlist-modify-private",
@@ -54,13 +103,14 @@ def create_app() -> Flask:
 
     with app.app_context():
         db.create_all()
+        ensure_artist_cache_schema()
 
     def load_env_values() -> dict[str, str]:
         return {
-            "FLASK_SECRET_KEY": os.getenv("FLASK_SECRET_KEY", "").strip(),
-            "SPOTIFY_CLIENT_ID": os.getenv("SPOTIFY_CLIENT_ID", "").strip(),
-            "SPOTIFY_CLIENT_SECRET": os.getenv("SPOTIFY_CLIENT_SECRET", "").strip(),
-            "SPOTIFY_REDIRECT_URI": os.getenv("SPOTIFY_REDIRECT_URI", "").strip(),
+            "FLASK_SECRET_KEY": get_config_value("FLASK_SECRET_KEY"),
+            "SPOTIFY_CLIENT_ID": get_config_value("SPOTIFY_CLIENT_ID"),
+            "SPOTIFY_CLIENT_SECRET": get_config_value("SPOTIFY_CLIENT_SECRET"),
+            "SPOTIFY_REDIRECT_URI": get_config_value("SPOTIFY_REDIRECT_URI"),
         }
 
     def is_local_request_host() -> bool:
@@ -184,6 +234,32 @@ def create_app() -> Flask:
 
         return status
 
+    def send_developer_request(username: str, email: str) -> None:
+        webhook_url = app.config["DEVELOPER_WEBHOOK_URL"].strip()
+        if not webhook_url:
+            raise RuntimeError("No hay webhook configurado para enviar la solicitud.")
+
+        payload = {
+            "embeds": [
+                {
+                    "title": "Nueva solicitud Spotify Developers",
+                    "color": 15179945,
+                    "fields": [
+                        {"name": "Developer user", "value": username, "inline": True},
+                        {"name": "Correo", "value": email, "inline": True},
+                        {"name": "Origen", "value": request.url_root.rstrip("/")},
+                    ],
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+            ]
+        }
+
+        try:
+            response = requests.post(webhook_url, json=payload, timeout=10)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise RuntimeError("No se pudo enviar la solicitud a Discord.") from exc
+
     @app.context_processor
     def inject_globals() -> dict[str, Any]:
         return {
@@ -213,6 +289,12 @@ def create_app() -> Flask:
                 "description": "Busca playlists propias o colaborativas y exportalas a TXT listo para descargar.",
                 "status": "Activo",
                 "url": url_for("export_playlist"),
+            },
+            {
+                "title": "Mejorador de playlists",
+                "description": "Analiza artistas, generos y popularidad para sugerir que anadir, quitar y reordenar.",
+                "status": "Activo",
+                "url": url_for("playlist_enhancer"),
             },
             {
                 "title": "Recomendaciones por genero",
@@ -252,6 +334,8 @@ def create_app() -> Flask:
         return render_template(
             "index.html",
             features=features,
+            signed_in_feature_cards=[features[1], features[2], features[3]],
+            public_feature_cards=[features[0], features[5]],
             primary_url=primary_url,
             primary_label=primary_label,
             secondary_url=secondary_url,
@@ -266,7 +350,7 @@ def create_app() -> Flask:
             or not app.config["SPOTIFY_REDIRECT_URI"]
         ):
             flash(
-                "Faltan variables de entorno de Spotify. Configuralas en Railway antes de iniciar sesion.",
+                "Faltan variables de entorno de Spotify. En local se cargan desde `.env`; en deploy, desde Railway.",
                 "danger",
             )
             return render_template("login.html", auth_url=None, effective_redirect_uri=get_effective_redirect_uri())
@@ -338,7 +422,8 @@ def create_app() -> Flask:
         }
         stored_user = SpotifyUser.query.filter_by(spotify_user_id=session["spotify_user"]["id"]).first()
         if not stored_user:
-            stored_user = SpotifyUser(spotify_user_id=session["spotify_user"]["id"])
+            stored_user = SpotifyUser()
+            stored_user.spotify_user_id = session["spotify_user"]["id"]
         stored_user.display_name = session["spotify_user"]["display_name"]
         stored_user.email = session["spotify_user"]["email"]
         stored_user.profile_url = session["spotify_user"]["profile_url"]
@@ -382,6 +467,7 @@ def create_app() -> Flask:
         manager = PlaylistManager(
             Path(app.config["UPLOAD_FOLDER"]),
             Path(app.config["EXPORT_FOLDER"]),
+            user_id=str(session.get("spotify_user", {}).get("id", "")),
         )
         result = None
 
@@ -418,26 +504,33 @@ def create_app() -> Flask:
         manager = PlaylistManager(
             Path(app.config["UPLOAD_FOLDER"]),
             Path(app.config["EXPORT_FOLDER"]),
+            user_id=str(session.get("spotify_user", {}).get("id", "")),
         )
         current_user_id = str(session.get("spotify_user", {}).get("id", ""))
         search_query = request.form.get("playlist_query", "") if request.method == "POST" else ""
         selected_playlist_id = request.form.get("playlist_id", "") if request.method == "POST" else ""
 
         try:
-            playlists = manager.find_exportable_playlists(
+            all_playlists = manager.list_exportable_playlists(
                 spotify_client=spotify_client,
                 access_token=session["spotify_access_token"],
                 current_user_id=current_user_id,
-                query=search_query,
             )
         except SpotifyClientError as exc:
             flash(str(exc), "danger")
-            playlists = []
+            all_playlists = []
+
+        if search_query.strip():
+            playlists = [
+                playlist for playlist in all_playlists if search_query.strip().lower() in playlist.get("search_text", "")
+            ]
+        else:
+            playlists = all_playlists
 
         result = None
         if request.method == "POST" and selected_playlist_id:
             selected_playlist = next(
-                (playlist for playlist in playlists if playlist.get("id") == selected_playlist_id),
+                (playlist for playlist in all_playlists if playlist.get("id") == selected_playlist_id),
                 None,
             )
             if not selected_playlist:
@@ -458,6 +551,7 @@ def create_app() -> Flask:
             playlists=playlists,
             result=result,
             search_query=search_query,
+            selected_playlist_id=selected_playlist_id,
         )
 
     @app.route("/exports/<path:filename>")
@@ -477,24 +571,24 @@ def create_app() -> Flask:
         except SpotifyAuthError as exc:
             flash(str(exc), "warning")
             return redirect(url_for("login"))
-        recommender = Recommender(get_spotify_client())
-        genre = request.args.get("genre", "")
+        recommender = Recommender(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
+        artist = request.args.get("artist", "")
         raw_limit = request.args.get("limit", "6").strip()
         limit = int(raw_limit) if raw_limit.isdigit() else 6
         limit = max(1, min(limit, 12))
         result = None
 
-        if genre.strip():
+        if artist.strip():
             try:
-                result = recommender.build_recommendation_result(
+                result = recommender.build_artist_discovery_result(
                     access_token=session["spotify_access_token"],
-                    genre=genre,
+                    artist_name=artist,
                     limit=limit,
                 )
                 if result["warning"]:
                     flash(result["warning"], "warning")
-                if not result["tracks"]:
-                    flash("No encontramos recomendaciones para ese genero en este momento.", "info")
+                if not result["similar_artists"] and not result["similar_tracks"]:
+                    flash("No encontramos resultados relacionados para ese artista en este momento.", "info")
             except SpotifyClientError as exc:
                 message = str(exc).strip()
                 if message.lower() == "forbidden":
@@ -507,10 +601,72 @@ def create_app() -> Flask:
 
         return render_template(
             "recommendations.html",
-            sample_genres=recommender.get_sample_genres(),
+            sample_artists=recommender.get_sample_artists(),
             result=result,
-            selected_genre=genre,
+            selected_artist=artist,
             selected_limit=limit,
+        )
+
+    @app.route("/playlist-enhancer", methods=["GET", "POST"])
+    @login_required
+    def playlist_enhancer() -> Any:
+        try:
+            spotify_client = ensure_spotify_session()
+        except SpotifyAuthError as exc:
+            flash(str(exc), "warning")
+            return redirect(url_for("login"))
+
+        manager = PlaylistManager(
+            Path(app.config["UPLOAD_FOLDER"]),
+            Path(app.config["EXPORT_FOLDER"]),
+            user_id=str(session.get("spotify_user", {}).get("id", "")),
+        )
+        enhancer = PlaylistEnhancer(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
+        current_user_id = str(session.get("spotify_user", {}).get("id", ""))
+        search_query = request.form.get("playlist_query", "") if request.method == "POST" else ""
+        selected_playlist_id = request.form.get("playlist_id", "") if request.method == "POST" else ""
+
+        try:
+            all_playlists = manager.list_exportable_playlists(
+                spotify_client=spotify_client,
+                access_token=session["spotify_access_token"],
+                current_user_id=current_user_id,
+            )
+        except SpotifyClientError as exc:
+            flash(str(exc), "danger")
+            all_playlists = []
+
+        if search_query.strip():
+            playlists = [
+                playlist for playlist in all_playlists if search_query.strip().lower() in playlist.get("search_text", "")
+            ]
+        else:
+            playlists = all_playlists
+
+        report = None
+        if request.method == "POST" and selected_playlist_id:
+            selected_playlist = next(
+                (playlist for playlist in all_playlists if playlist.get("id") == selected_playlist_id),
+                None,
+            )
+            if not selected_playlist:
+                flash("Selecciona una playlist valida para analizar.", "danger")
+            else:
+                try:
+                    report = enhancer.build_playlist_report(
+                        access_token=session["spotify_access_token"],
+                        playlist=selected_playlist,
+                    )
+                    flash("Playlist analizada correctamente.", "success")
+                except SpotifyClientError as exc:
+                    flash(str(exc), "danger")
+
+        return render_template(
+            "playlist_enhancer.html",
+            playlists=playlists,
+            report=report,
+            search_query=search_query,
+            selected_playlist_id=selected_playlist_id,
         )
 
     @app.route("/prompt-generator", methods=["GET", "POST"])
@@ -552,8 +708,12 @@ def create_app() -> Flask:
         if selected_range not in TIME_RANGE_LABELS:
             selected_range = "short_term"
 
-        stats_service = StatsService(get_spotify_client())
-        snapshot = stats_service.build_snapshot(session["spotify_access_token"])
+        stats_service = StatsService(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
+        try:
+            snapshot = stats_service.build_snapshot(session["spotify_access_token"])
+        except SpotifyClientError as exc:
+            flash(str(exc), "warning")
+            return redirect(url_for("index"))
         return render_template(
             "dashboard.html",
             snapshot=snapshot,
@@ -574,27 +734,56 @@ def create_app() -> Flask:
         if selected_range not in TIME_RANGE_LABELS:
             selected_range = "short_term"
 
-        stats_service = StatsService(get_spotify_client())
-        snapshot = stats_service.build_snapshot(session["spotify_access_token"])
+        stats_service = StatsService(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
+        try:
+            snapshot = stats_service.build_snapshot(session["spotify_access_token"])
+        except SpotifyClientError as exc:
+            flash(str(exc), "warning")
+            return redirect(url_for("dashboard", range=selected_range))
         builder = DashboardReportBuilder(Path(app.config["EXPORT_FOLDER"]))
         output_path = builder.build(snapshot, selected_range)
         return send_file(output_path, as_attachment=True, download_name=output_path.name)
 
-    @app.route("/profile")
+    @app.route("/profile", methods=["GET", "POST"])
     def profile() -> Any:
+        developer_form = {
+            "username": "",
+            "email": "",
+        }
+
+        if request.method == "POST":
+            developer_form["username"] = request.form.get("developer_username", "").strip()
+            developer_form["email"] = request.form.get("developer_email", "").strip()
+
+            if not developer_form["username"]:
+                flash("Escribe tu usuario de Developers antes de enviar la solicitud.", "danger")
+            elif not developer_form["email"] or "@" not in developer_form["email"]:
+                flash("Introduce un correo valido para enviar la solicitud.", "danger")
+            else:
+                try:
+                    send_developer_request(
+                        username=developer_form["username"],
+                        email=developer_form["email"],
+                    )
+                    flash("Solicitud enviada a Discord correctamente.", "success")
+                    return redirect(url_for("profile"))
+                except RuntimeError as exc:
+                    flash(str(exc), "danger")
+
         env_values = load_env_values()
         token_status = get_token_status()
         setup_steps = [
             "Entra en Spotify for Developers y crea una app nueva desde tu dashboard.",
             "En la configuracion de la app, anade exactamente la Redirect URI publica de Nozomi o `http://127.0.0.1:8888/callback` para local.",
-            "En Railway abre tu servicio y ve a Variables.",
-            "Configura `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI` y `FLASK_SECRET_KEY`.",
-            "Redeploya si hace falta y vuelve a Nozomi Music para iniciar sesion con Spotify.",
+            "En local guarda `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI` y `FLASK_SECRET_KEY` en `.env`.",
+            "En Railway abre tu servicio, ve a Variables y configura esas mismas claves para produccion.",
+            "Reinicia en local o redeploya en Railway y vuelve a Nozomi Music para iniciar sesion con Spotify.",
             "Si Spotify responde y el token es valido, ya puedes usar crear, exportar y recomendar.",
         ]
 
         return render_template(
             "profile.html",
+            developer_form=developer_form,
             env_values=env_values,
             token_status=token_status,
             setup_steps=setup_steps,

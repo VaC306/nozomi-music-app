@@ -452,6 +452,35 @@ body {
   color: var(--text);
 }
 
+.request-side-panel {
+  background:
+    radial-gradient(circle at top right, rgba(230, 160, 169, 0.14), transparent 36%),
+    var(--surface-alt);
+}
+
+.request-preview {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.request-preview-row {
+  padding: 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.request-preview-row strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--text);
+}
+
+.request-preview-row span {
+  color: var(--muted);
+}
+
 .sample-pre {
   margin-top: 0.8rem;
   color: var(--text);
@@ -868,6 +897,77 @@ select.nozomi-input option {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.enhancer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.enhancer-card {
+  min-height: 100%;
+}
+
+.enhancer-card-wide {
+  grid-column: 1 / -1;
+}
+
+.enhancer-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.enhancer-track-list,
+.enhancer-order-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.enhancer-track-item,
+.enhancer-order-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.8rem;
+  align-items: start;
+  padding: 0.9rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.enhancer-order-item {
+  grid-template-columns: 42px 1fr auto;
+  align-items: center;
+}
+
+.enhancer-order-item > span,
+.enhancer-popularity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0.35rem 0.55rem;
+  border-radius: 12px;
+  background: var(--spotify-soft);
+  color: var(--spotify);
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 700;
+}
+
+.enhancer-track-item strong,
+.enhancer-order-item strong {
+  display: block;
+  color: var(--text);
+}
+
+.enhancer-track-item a,
+.enhancer-order-item a {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
 .phase-list {
   padding-left: 1.1rem;
 }
@@ -988,7 +1088,9 @@ select.nozomi-input option {
   .recommendation-grid,
   .quick-actions,
   .preview-summary,
-  .dashboard-grid {
+  .dashboard-grid,
+  .enhancer-grid,
+  .enhancer-meta-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1017,7 +1119,9 @@ select.nozomi-input option {
   .recommendation-grid,
   .quick-actions,
   .preview-summary,
-  .dashboard-grid {
+  .dashboard-grid,
+  .enhancer-grid,
+  .enhancer-meta-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1040,5 +1144,10 @@ select.nozomi-input option {
 
   .dashboard-item {
     grid-template-columns: 32px 1fr;
+  }
+
+  .enhancer-track-item,
+  .enhancer-order-item {
+    grid-template-columns: 1fr;
   }
 }

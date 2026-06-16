@@ -7,17 +7,17 @@
   <div class="row g-4 align-items-start">
     <div class="col-lg-7">
       <span class="eyebrow">Fase 4 activa</span>
-      <h1 class="section-title mt-3">Recomendaciones por genero</h1>
+      <h1 class="section-title mt-3">Descubrimiento musical por artista</h1>
       <p class="panel-copy mt-3 mb-0">
-        Pide un genero, ajusta la cantidad de resultados y deja que Nozomi Music combine el endpoint oficial con un fallback inteligente cuando Spotify se pone restrictivo.
+        Elige un artista base, ajusta la cantidad de resultados y deja que Nozomi Music combine recomendaciones sembradas por artista con rutas alternativas cuando Spotify se pone restrictivo.
       </p>
     </div>
     <div class="col-lg-5">
       <div class="info-note h-100">
-        <strong>Generos sugeridos</strong>
+        <strong>Artistas sugeridos</strong>
         <div class="sample-chips mt-3">
-          {% for genre in sample_genres %}
-            <a class="genre-chip genre-link" href="{{ url_for('recommendations', genre=genre, limit=selected_limit or 6) }}">{{ genre }}</a>
+          {% for artist in sample_artists %}
+            <a class="genre-chip genre-link" href="{{ url_for('recommendations', artist=artist, limit=selected_limit or 6) }}">{{ artist }}</a>
           {% endfor %}
         </div>
       </div>
@@ -30,19 +30,19 @@
     <div class="content-panel h-100 form-panel">
       <div class="section-heading mb-4">
         <span class="eyebrow">Busqueda</span>
-        <h2 class="section-title">Encuentra nuevas canciones por estilo</h2>
+        <h2 class="section-title">Encuentra artistas y canciones cercanas</h2>
       </div>
 
       <form method="get" class="playlist-form">
         <div class="mb-4">
-          <label for="genre" class="form-label">Genero</label>
+          <label for="artist" class="form-label">Artista base</label>
           <input
             type="text"
             class="form-control form-control-lg nozomi-input"
-            id="genre"
-            name="genre"
-            placeholder="Ej. dream-pop, techno, city-pop"
-            value="{{ selected_genre or '' }}"
+            id="artist"
+            name="artist"
+            placeholder="Ej. The Strokes, Rosalía, Radiohead"
+            value="{{ selected_artist or '' }}"
             required
           >
         </div>
@@ -70,22 +70,22 @@
       <div class="process-step mt-4">
         <span>01</span>
         <div>
-          <strong>Prueba directa</strong>
-          <p class="mb-0">Intentamos primero el endpoint oficial de recomendaciones por genero.</p>
+          <strong>Resolucion base</strong>
+          <p class="mb-0">Buscamos el artista en Spotify y recuperamos sus top tracks para preparar semillas utiles.</p>
         </div>
       </div>
       <div class="process-step">
         <span>02</span>
         <div>
-          <strong>Fallback</strong>
-          <p class="mb-0">Si Spotify limita ese endpoint, buscamos artistas del genero y extraemos sus top tracks.</p>
+          <strong>Motor de similitud</strong>
+          <p class="mb-0">Intentamos recomendaciones sembradas por artista y cancion para encontrar nombres y temas cercanos.</p>
         </div>
       </div>
       <div class="process-step mb-0">
         <span>03</span>
         <div>
-          <strong>Curado final</strong>
-          <p class="mb-0">Quitamos duplicados y te devolvemos una seleccion mas limpia para explorar.</p>
+          <strong>Fallback curado</strong>
+          <p class="mb-0">Si Spotify se cierra, usamos generos del artista base y top tracks relacionados para no dejar la busqueda vacia.</p>
         </div>
       </div>
     </div>
@@ -97,16 +97,89 @@
   <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
     <div>
       <span class="eyebrow">Resultado</span>
-      <h2 class="section-title mt-2 mb-0">{{ result.genre }}</h2>
+      <h2 class="section-title mt-2 mb-0">{{ result.base_artist.name if result.base_artist else result.query }}</h2>
     </div>
     <div class="result-source-pill">
-      <strong>{{ result.count }}</strong>
-      <span>{{ 'fallback por artistas' if result.source == 'artist-fallback' else 'endpoint principal' }}</span>
+      <strong>{{ result.artist_count + result.track_count }}</strong>
+      <span>{{ 'fallback por genero' if result.source == 'genre-fallback' else 'mezcla curada' }}</span>
+    </div>
+  </div>
+
+  {% if result.base_artist %}
+  <article class="track-card mb-4">
+    <div class="track-media">
+      {% if result.base_artist.image %}
+        <img src="{{ result.base_artist.image }}" alt="{{ result.base_artist.name }}" class="track-cover">
+      {% else %}
+        <div class="track-cover placeholder-cover">♪</div>
+      {% endif %}
+    </div>
+    <div class="track-body">
+      <span class="mini-label">Artista base</span>
+      <h3>{{ result.base_artist.name }}</h3>
+      <p class="track-meta">{{ result.base_artist.genres_label }}</p>
+      <p class="track-submeta">Popularidad: {{ result.base_artist.popularity }} · Followers: {{ result.base_artist.followers }}</p>
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        {% if result.base_artist.url %}
+          <a href="{{ result.base_artist.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-spotify btn-sm">Abrir artista</a>
+        {% endif %}
+      </div>
+    </div>
+  </article>
+  {% endif %}
+
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Artistas similares</span>
+      <h3 class="section-title mt-2 mb-0">Nuevos nombres para seguir</h3>
+    </div>
+    <div class="result-source-pill">
+      <strong>{{ result.artist_count }}</strong>
+      <span>artistas</span>
+    </div>
+  </div>
+
+  <div class="recommendation-grid mb-4">
+    {% for artist in result.similar_artists %}
+      <article class="track-card">
+        <div class="track-media">
+          {% if artist.image %}
+            <img src="{{ artist.image }}" alt="{{ artist.name }}" class="track-cover">
+          {% else %}
+            <div class="track-cover placeholder-cover">♪</div>
+          {% endif %}
+        </div>
+        <div class="track-body">
+          <span class="mini-label">Relacionado</span>
+          <h3>{{ artist.name }}</h3>
+          <p class="track-meta">{{ artist.genres_label }}</p>
+          <p class="track-submeta">Popularidad: {{ artist.popularity }}</p>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            {% if artist.url %}
+              <a href="{{ artist.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-spotify btn-sm">Abrir en Spotify</a>
+            {% endif %}
+          </div>
+        </div>
+      </article>
+    {% endfor %}
+    {% if not result.similar_artists %}
+      <p class="mb-0">Todavia no encontramos artistas similares para este caso.</p>
+    {% endif %}
+  </div>
+
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Canciones similares</span>
+      <h3 class="section-title mt-2 mb-0">Tracks para escuchar despues</h3>
+    </div>
+    <div class="result-source-pill">
+      <strong>{{ result.track_count }}</strong>
+      <span>canciones</span>
     </div>
   </div>
 
   <div class="recommendation-grid">
-    {% for track in result.tracks %}
+    {% for track in result.similar_tracks %}
       <article class="track-card">
         <div class="track-media">
           {% if track.image %}
@@ -116,7 +189,7 @@
           {% endif %}
         </div>
         <div class="track-body">
-          <span class="mini-label">{{ result.genre }}</span>
+          <span class="mini-label">Similar</span>
           <h3>{{ track.name }}</h3>
           <p class="track-meta">{{ track.artists }}</p>
           {% if track.album %}
@@ -133,6 +206,9 @@
         </div>
       </article>
     {% endfor %}
+    {% if not result.similar_tracks %}
+      <p class="mb-0">Todavia no encontramos canciones similares para este caso.</p>
+    {% endif %}
   </div>
 </section>
 {% endif %}

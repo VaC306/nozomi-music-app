@@ -34,7 +34,7 @@
         <h2>Top tracks</h2>
         <div class="list">
           {% for track in snapshot.top_tracks[selected_range] %}
-            <div class="item"><strong>{{ track.rank }}. {{ track.name }}</strong><span class="muted">{{ track.artists }}</span></div>
+            <div class="item"><strong>{{ track.rank }}. {{ track.name }}</strong><span class="muted">{{ track.artists }}</span><br><span class="muted">{{ track.genres_label }}</span></div>
           {% endfor %}
         </div>
       </div>
