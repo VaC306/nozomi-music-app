@@ -6,6 +6,7 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
@@ -90,13 +91,36 @@ def create_app() -> Flask:
         app.config["SPOTIFY_CLIENT_SECRET"] = values.get("SPOTIFY_CLIENT_SECRET", "").strip()
         app.config["SPOTIFY_REDIRECT_URI"] = values.get("SPOTIFY_REDIRECT_URI", "").strip()
 
-    def get_spotify_client() -> SpotifyClient:
+    def is_local_request_host() -> bool:
+        return request.host.split(":", 1)[0].lower() in {"127.0.0.1", "localhost"}
+
+    def get_effective_redirect_uri() -> str:
+        configured_redirect = app.config["SPOTIFY_REDIRECT_URI"].strip()
+        suggested_redirect = get_suggested_redirect_uri().strip()
+        if is_local_request_host() and configured_redirect and _is_local_redirect_uri(configured_redirect):
+            return configured_redirect
+        if is_local_request_host() and not configured_redirect:
+            return suggested_redirect
+        return configured_redirect
+
+    def get_spotify_client(redirect_uri: str | None = None) -> SpotifyClient:
         return SpotifyClient(
             client_id=app.config["SPOTIFY_CLIENT_ID"],
             client_secret=app.config["SPOTIFY_CLIENT_SECRET"],
-            redirect_uri=app.config["SPOTIFY_REDIRECT_URI"],
+            redirect_uri=(redirect_uri or get_effective_redirect_uri()),
             scopes=app.config["SPOTIFY_SCOPES"],
         )
+
+    def get_suggested_redirect_uri() -> str:
+        return url_for("callback", _external=True)
+
+    @staticmethod
+    def _is_local_redirect_uri(value: str) -> bool:
+        if not value.strip():
+            return False
+        parsed = urlparse(value)
+        hostname = (parsed.hostname or "").lower()
+        return hostname in {"127.0.0.1", "localhost"}
 
     def login_required(view: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(view)
@@ -194,6 +218,7 @@ def create_app() -> Flask:
             "spotify_user": session.get("spotify_user"),
             "current_year": datetime.now().year,
             "request_endpoint": request.endpoint,
+            "suggested_redirect_uri": get_suggested_redirect_uri(),
         }
 
     @app.route("/")
@@ -272,22 +297,39 @@ def create_app() -> Flask:
                 "Completa la configuracion de Spotify en Perfil antes de iniciar sesion.",
                 "danger",
             )
-            return render_template("login.html", auth_url=None)
+            return render_template("login.html", auth_url=None, effective_redirect_uri=get_effective_redirect_uri())
 
-        client = get_spotify_client()
+        current_host_is_local = is_local_request_host()
+        configured_redirect = app.config["SPOTIFY_REDIRECT_URI"].strip()
+        if not current_host_is_local and _is_local_redirect_uri(configured_redirect):
+            flash(
+                "La Redirect URI guardada sigue apuntando a localhost. Actualizala en Perfil con la URL publica actual antes de iniciar sesion.",
+                "warning",
+            )
+            return redirect(url_for("profile"))
+
+        effective_redirect_uri = get_effective_redirect_uri()
+        client = get_spotify_client(effective_redirect_uri)
         state = secrets.token_urlsafe(24)
         session["spotify_oauth_state"] = state
+        session["spotify_oauth_redirect_uri"] = effective_redirect_uri
         auth_url = client.build_authorization_url(state)
 
         if request.args.get("start") == "1":
             return redirect(auth_url)
 
-        return render_template("login.html", auth_url=auth_url)
+        return render_template("login.html", auth_url=auth_url, effective_redirect_uri=effective_redirect_uri)
 
     @app.route("/callback")
     def callback() -> Any:
         error = request.args.get("error")
         if error:
+            if error == "server_error":
+                flash(
+                    "Spotify devolvio `server_error`. En local suele indicar que la Redirect URI registrada no coincide exactamente. Usa `http://127.0.0.1:8888/callback` en Perfil y en Spotify Developers.",
+                    "danger",
+                )
+                return redirect(url_for("profile"))
             flash(f"Spotify devolvio un error de autorizacion: {error}", "danger")
             return redirect(url_for("login"))
 
@@ -305,7 +347,8 @@ def create_app() -> Flask:
             flash("Spotify no devolvio un codigo de autorizacion valido.", "danger")
             return redirect(url_for("login"))
 
-        client = get_spotify_client()
+        redirect_uri = str(session.get("spotify_oauth_redirect_uri", get_effective_redirect_uri()))
+        client = get_spotify_client(redirect_uri)
         try:
             token_data = client.exchange_code_for_token(code)
             _store_token_session(token_data)
@@ -333,10 +376,11 @@ def create_app() -> Flask:
         stored_user.token_expires_at = int(session.get("spotify_expires_at", 0) or 0)
         stored_user.client_id = app.config["SPOTIFY_CLIENT_ID"]
         stored_user.client_secret = app.config["SPOTIFY_CLIENT_SECRET"]
-        stored_user.redirect_uri = app.config["SPOTIFY_REDIRECT_URI"]
+        stored_user.redirect_uri = redirect_uri
         db.session.add(stored_user)
         db.session.commit()
         session.pop("spotify_oauth_state", None)
+        session.pop("spotify_oauth_redirect_uri", None)
         flash("Sesion iniciada correctamente con Spotify.", "success")
         return redirect(url_for("index"))
 
@@ -480,7 +524,14 @@ def create_app() -> Flask:
                 if not result["tracks"]:
                     flash("No encontramos recomendaciones para ese genero en este momento.", "info")
             except SpotifyClientError as exc:
-                flash(str(exc), "danger")
+                message = str(exc).strip()
+                if message.lower() == "forbidden":
+                    flash(
+                        "Spotify no permite usar este endpoint con la sesion actual. Probaremos otras rutas cuando haya datos disponibles.",
+                        "warning",
+                    )
+                else:
+                    flash(message, "danger")
 
         return render_template(
             "recommendations.html",
@@ -593,6 +644,7 @@ def create_app() -> Flask:
             env_values=env_values,
             token_status=token_status,
             setup_steps=setup_steps,
+            suggested_redirect_uri=get_suggested_redirect_uri(),
         )
 
     @app.errorhandler(413)
@@ -607,4 +659,4 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="127.0.0.1", port=int(os.getenv("PORT", "8888")), debug=True)

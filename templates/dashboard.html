@@ -107,13 +107,13 @@
   </div>
   <div class="dashboard-list">
     {% for track in snapshot.recent_tracks %}
-      <article class="dashboard-item">
+      <article class="dashboard-item dashboard-item-recent">
         {% if track.image_url %}<img src="{{ track.image_url }}" alt="{{ track.name }}" class="dashboard-thumb">{% else %}<div class="dashboard-thumb dashboard-thumb-placeholder">♪</div>{% endif %}
         <div>
           <strong>{{ track.name }}</strong>
           <p>{{ track.artists }}</p>
         </div>
-        <span class="dashboard-context">{{ track.context_type or 'track' }}</span>
+        <span class="dashboard-context">{{ track.played_at_label }}{% if track.context_type %} · {{ track.context_type }}{% endif %}</span>
       </article>
     {% endfor %}
     {% if not snapshot.recent_tracks %}

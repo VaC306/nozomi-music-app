@@ -164,11 +164,19 @@ class StatsService:
             track = item.get("track") or {}
             album = track.get("album", {})
             images = album.get("images", []) or []
+            played_at_raw = item.get("played_at", "")
+            played_at_label = played_at_raw
+            if played_at_raw:
+                try:
+                    played_at_label = datetime.fromisoformat(played_at_raw.replace("Z", "+00:00")).strftime("%d/%m %H:%M")
+                except ValueError:
+                    played_at_label = played_at_raw
             normalized.append(
                 {
                     "name": track.get("name", "Sin titulo"),
                     "artists": ", ".join(artist.get("name", "") for artist in track.get("artists", [])),
-                    "played_at": item.get("played_at", ""),
+                    "played_at": played_at_raw,
+                    "played_at_label": played_at_label,
                     "context_type": (item.get("context") or {}).get("type", ""),
                     "image_url": images[0].get("url", "") if images else "",
                     "spotify_url": track.get("external_urls", {}).get("spotify", ""),

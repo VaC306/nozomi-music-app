@@ -58,7 +58,7 @@ class Recommender:
                 "warning": "",
             }
 
-        warning = ""
+        warnings: list[str] = []
         source = "recommendations"
         try:
             direct_tracks = self.spotify_client.get_recommendations_by_genre(
@@ -68,20 +68,44 @@ class Recommender:
             )
         except SpotifyClientError:
             direct_tracks = []
-            warning = (
+            warnings.append(
                 "Spotify limito el endpoint principal de recomendaciones; mostramos un fallback basado en artistas del genero."
             )
 
         tracks = self._deduplicate_tracks(direct_tracks)
         if not tracks:
             source = "artist-fallback"
-            artists = self.spotify_client.search_artists_by_genre(access_token, genre_value, limit=3)
+            try:
+                artists = self.spotify_client.search_artists_by_genre(access_token, genre_value, limit=3)
+            except SpotifyClientError:
+                artists = []
+                warnings.append(
+                    "Spotify no permitio buscar artistas para este genero con la sesion actual."
+                )
+
             fallback_tracks: list[dict[str, Any]] = []
             for artist in artists:
-                fallback_tracks.extend(self.spotify_client.get_artist_top_tracks(access_token, artist["id"]))
+                try:
+                    fallback_tracks.extend(self.spotify_client.get_artist_top_tracks(access_token, artist["id"]))
+                except SpotifyClientError:
+                    continue
                 if len(fallback_tracks) >= limit * 2:
                     break
             tracks = self._deduplicate_tracks(fallback_tracks)
+
+        if not tracks:
+            source = "keyword-fallback"
+            try:
+                keyword_tracks = self.spotify_client.search_tracks_by_keyword(access_token, genre_value, limit=max(limit, 8))
+            except SpotifyClientError:
+                keyword_tracks = []
+                warnings.append(
+                    "Spotify tambien bloqueo la busqueda alternativa por palabra clave."
+                )
+            tracks = self._deduplicate_tracks(keyword_tracks)
+
+        if not tracks and not warnings:
+            warnings.append("Spotify no devolvio recomendaciones para este genero.")
 
         formatted_tracks = [self._format_track(track) for track in tracks[:limit]]
         return {
@@ -89,7 +113,7 @@ class Recommender:
             "tracks": formatted_tracks,
             "count": len(formatted_tracks),
             "source": source,
-            "warning": warning,
+            "warning": " ".join(warnings).strip(),
         }
 
     @staticmethod

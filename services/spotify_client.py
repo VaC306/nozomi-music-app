@@ -173,6 +173,15 @@ class SpotifyClient:
         )
         return data.get("artists", {}).get("items", [])
 
+    def search_tracks_by_keyword(self, access_token: str, keyword: str, limit: int = 10) -> list[dict[str, Any]]:
+        data = self.request(
+            access_token,
+            "GET",
+            "/search",
+            params={"q": keyword, "type": "track", "limit": limit},
+        )
+        return data.get("tracks", {}).get("items", [])
+
     def get_artist_top_tracks(self, access_token: str, artist_id: str, market: str = "US") -> list[dict[str, Any]]:
         data = self.request(
             access_token,

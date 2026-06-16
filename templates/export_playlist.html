@@ -48,10 +48,10 @@
           <div class="form-hint mt-2">Si lo dejas vacio, mostraremos todas las playlists exportables.</div>
         </div>
 
-        <div class="playlist-picker mb-4">
+        <div class="playlist-picker mb-4" id="playlist-picker">
           {% if playlists %}
             {% for playlist in playlists %}
-              <label class="playlist-option">
+              <label class="playlist-option" data-playlist-name="{{ playlist.name|lower }} {{ (playlist.owner.display_name or playlist.owner.id)|lower }}">
                 <input type="radio" name="playlist_id" value="{{ playlist.id }}" {% if loop.first %}checked{% endif %}>
                 <span class="playlist-option-body">
                   <strong>{{ playlist.name }}</strong>
@@ -64,12 +64,19 @@
               </label>
             {% endfor %}
           {% else %}
-            <div class="empty-state compact-empty">
+            <div class="empty-state compact-empty" id="playlist-empty-state">
               <h2>Sin coincidencias</h2>
               <p class="mb-0">No encontramos playlists exportables con ese filtro.</p>
             </div>
           {% endif %}
         </div>
+
+        {% if playlists %}
+          <div class="empty-state compact-empty" id="playlist-filter-empty" hidden>
+            <h2>Sin coincidencias</h2>
+            <p class="mb-0">No hay playlists visibles con ese filtro en tiempo real.</p>
+          </div>
+        {% endif %}
 
         <div class="d-flex flex-wrap gap-3">
           <button type="submit" class="btn btn-spotify btn-lg">Exportar a TXT</button>
@@ -147,4 +154,44 @@
   </div>
 </section>
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const queryInput = document.getElementById('playlist_query');
+  const playlistOptions = Array.from(document.querySelectorAll('.playlist-option[data-playlist-name]'));
+  const liveEmpty = document.getElementById('playlist-filter-empty');
+
+  if (queryInput && playlistOptions.length) {
+    const applyPlaylistFilter = () => {
+      const query = queryInput.value.trim().toLowerCase();
+      let visibleCount = 0;
+
+      playlistOptions.forEach((option) => {
+        const haystack = option.dataset.playlistName || '';
+        const visible = !query || haystack.includes(query);
+        option.hidden = !visible;
+        if (visible) {
+          visibleCount += 1;
+        }
+      });
+
+      if (liveEmpty) {
+        liveEmpty.hidden = visibleCount > 0;
+      }
+
+      const checkedVisible = playlistOptions.find((option) => !option.hidden && option.querySelector('input')?.checked);
+      if (!checkedVisible) {
+        const firstVisible = playlistOptions.find((option) => !option.hidden);
+        const radio = firstVisible?.querySelector('input');
+        if (radio) {
+          radio.checked = true;
+        }
+      }
+    };
+
+    queryInput.addEventListener('input', applyPlaylistFilter);
+    applyPlaylistFilter();
+  }
+</script>
 {% endblock %}

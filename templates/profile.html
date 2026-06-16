@@ -66,6 +66,10 @@
         <div class="mb-4">
           <label for="spotify_redirect_uri" class="form-label">Spotify Redirect URI</label>
           <input id="spotify_redirect_uri" name="spotify_redirect_uri" type="text" class="form-control nozomi-input" value="{{ env_values.SPOTIFY_REDIRECT_URI }}" placeholder="http://127.0.0.1:5000/callback">
+          <div class="form-hint mt-2">
+            Sugerida para este entorno: <button type="button" class="inline-link" id="use-suggested-redirect">{{ suggested_redirect_uri }}</button>
+          </div>
+          <div class="form-hint mt-1">Para desarrollo local con este proyecto usa `http://127.0.0.1:8888/callback` y registrala igual en Spotify Developers.</div>
         </div>
 
         <div class="mb-4">
@@ -76,6 +80,7 @@
         <div class="d-flex flex-wrap gap-3 align-items-center">
           <button type="submit" name="action" value="save" class="btn btn-spotify btn-lg">Guardar configuracion</button>
           <button type="submit" name="action" value="test_config" class="btn btn-outline-light btn-lg">Probar configuracion Spotify</button>
+          <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener noreferrer" class="btn btn-outline-light btn-lg">Abrir Spotify Developers</a>
         </div>
       </form>
     </div>
@@ -115,4 +120,17 @@
 
   <a href="{{ url_for('login') }}" class="btn btn-outline-light">Ir a login Spotify</a>
 </section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const redirectInput = document.getElementById('spotify_redirect_uri');
+  const redirectButton = document.getElementById('use-suggested-redirect');
+  if (redirectInput && redirectButton) {
+    redirectButton.addEventListener('click', () => {
+      redirectInput.value = redirectButton.textContent.trim();
+      redirectInput.focus();
+    });
+  }
+</script>
 {% endblock %}

@@ -17,8 +17,17 @@
     </div>
     <div class="info-item">
       <strong>Callback</strong>
-      <span>Debes registrar exactamente la misma URL configurada en `SPOTIFY_REDIRECT_URI`.</span>
+      <span>Debe coincidir con la Redirect URI de Spotify Developers.</span>
     </div>
+  </div>
+
+  <div class="helper-banner mt-4">
+    <strong>Local:</strong> si estas probando en desarrollo con este proyecto, registra y usa `http://127.0.0.1:8888/callback`.
+  </div>
+
+  <div class="info-note mt-4">
+    <strong>URI usada ahora</strong>
+    <p class="mb-0 mt-2 monospace-meta">{{ effective_redirect_uri or suggested_redirect_uri }}</p>
   </div>
 
   {% if auth_url %}
