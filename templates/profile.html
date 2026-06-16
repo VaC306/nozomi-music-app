@@ -8,7 +8,7 @@
     <div class="col-lg-7">
       <span class="eyebrow">Perfil y setup</span>
       <h1 class="section-title mt-3">Configura Spotify y valida tu sesion</h1>
-      <p class="panel-copy mt-3 mb-0">Guarda en PostgreSQL. Prueba. Inicia sesion.</p>
+      <p class="panel-copy mt-3 mb-0">Variables desde Railway. No se necesita formulario.</p>
     </div>
     <div class="col-lg-5">
       <div class="info-note h-100">
@@ -25,9 +25,9 @@
 </section>
 
 <section class="row g-4 align-items-start">
-  <div class="col-xl-5">
+  <div class="col-xl-12">
     <div class="content-panel h-100 steps-panel">
-      <span class="eyebrow">Guia</span>
+      <span class="eyebrow">Guia Railway</span>
       {% for step in setup_steps %}
         <div class="process-step {% if loop.first %}mt-4{% endif %} {% if loop.last %}mb-0{% endif %}">
           <span>{{ '%02d' % loop.index }}</span>
@@ -37,52 +37,6 @@
           </div>
         </div>
       {% endfor %}
-    </div>
-  </div>
-
-  <div class="col-xl-7">
-    <div class="content-panel h-100 form-panel">
-      <div class="section-heading mb-4">
-        <span class="eyebrow">Configuracion</span>
-        <h2 class="section-title">Credenciales</h2>
-      </div>
-
-      <div class="helper-banner mb-4">
-        <strong>Persistencia:</strong> lo que guardes aqui se almacena en PostgreSQL y queda disponible tras reinicios del deploy.
-      </div>
-
-      <form method="post" class="playlist-form">
-        <div class="row g-3 mb-4">
-          <div class="col-md-6">
-            <label for="spotify_client_id" class="form-label">Spotify Client ID</label>
-            <input id="spotify_client_id" name="spotify_client_id" type="text" class="form-control nozomi-input" value="{{ env_values.SPOTIFY_CLIENT_ID }}">
-          </div>
-          <div class="col-md-6">
-            <label for="spotify_client_secret" class="form-label">Spotify Client Secret</label>
-            <input id="spotify_client_secret" name="spotify_client_secret" type="password" class="form-control nozomi-input" value="{{ env_values.SPOTIFY_CLIENT_SECRET }}">
-          </div>
-        </div>
-
-        <div class="mb-4">
-          <label for="spotify_redirect_uri" class="form-label">Spotify Redirect URI</label>
-          <input id="spotify_redirect_uri" name="spotify_redirect_uri" type="text" class="form-control nozomi-input" value="{{ env_values.SPOTIFY_REDIRECT_URI }}" placeholder="http://127.0.0.1:5000/callback">
-          <div class="form-hint mt-2">
-            Sugerida para este entorno: <button type="button" class="inline-link" id="use-suggested-redirect">{{ suggested_redirect_uri }}</button>
-          </div>
-          <div class="form-hint mt-1">Para desarrollo local con este proyecto usa `http://127.0.0.1:8888/callback` y registrala igual en Spotify Developers.</div>
-        </div>
-
-        <div class="mb-4">
-          <label for="flask_secret_key" class="form-label">Flask Secret Key</label>
-          <input id="flask_secret_key" name="flask_secret_key" type="text" class="form-control nozomi-input" value="{{ env_values.FLASK_SECRET_KEY }}" placeholder="clave privada para sesiones Flask">
-        </div>
-
-        <div class="d-flex flex-wrap gap-3 align-items-center">
-          <button type="submit" name="action" value="save" class="btn btn-spotify btn-lg">Guardar configuracion</button>
-          <button type="submit" name="action" value="test_config" class="btn btn-outline-light btn-lg">Probar configuracion Spotify</button>
-          <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener noreferrer" class="btn btn-outline-light btn-lg">Abrir Spotify Developers</a>
-        </div>
-      </form>
     </div>
   </div>
 </section>
@@ -122,15 +76,4 @@
 </section>
 {% endblock %}
 
-{% block extra_scripts %}
-<script>
-  const redirectInput = document.getElementById('spotify_redirect_uri');
-  const redirectButton = document.getElementById('use-suggested-redirect');
-  if (redirectInput && redirectButton) {
-    redirectButton.addEventListener('click', () => {
-      redirectInput.value = redirectButton.textContent.trim();
-      redirectInput.focus();
-    });
-  }
-</script>
-{% endblock %}
+

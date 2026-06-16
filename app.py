@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
 
-from models import AppSettings, SpotifyUser, db
+from models import SpotifyUser, db
 from services.dashboard_report import DashboardReportBuilder
 from services.playlist_manager import PlaylistImportError, PlaylistManager
 from services.prompt_generator import PromptGenerator, PromptGeneratorError
@@ -55,41 +55,13 @@ def create_app() -> Flask:
     with app.app_context():
         db.create_all()
 
-        persisted_settings = AppSettings.query.get(1)
-        if persisted_settings:
-            if persisted_settings.flask_secret_key.strip():
-                app.config["SECRET_KEY"] = persisted_settings.flask_secret_key.strip()
-            app.config["SPOTIFY_CLIENT_ID"] = persisted_settings.spotify_client_id.strip()
-            app.config["SPOTIFY_CLIENT_SECRET"] = persisted_settings.spotify_client_secret.strip()
-            app.config["SPOTIFY_REDIRECT_URI"] = persisted_settings.spotify_redirect_uri.strip()
-
     def load_env_values() -> dict[str, str]:
-        db_settings = AppSettings.query.get(1)
-        values = {
-            "FLASK_SECRET_KEY": (db_settings.flask_secret_key if db_settings else os.getenv("FLASK_SECRET_KEY", "")),
-            "SPOTIFY_CLIENT_ID": (db_settings.spotify_client_id if db_settings else os.getenv("SPOTIFY_CLIENT_ID", "")),
-            "SPOTIFY_CLIENT_SECRET": (db_settings.spotify_client_secret if db_settings else os.getenv("SPOTIFY_CLIENT_SECRET", "")),
-            "SPOTIFY_REDIRECT_URI": (db_settings.spotify_redirect_uri if db_settings else os.getenv("SPOTIFY_REDIRECT_URI", "")),
+        return {
+            "FLASK_SECRET_KEY": os.getenv("FLASK_SECRET_KEY", "").strip(),
+            "SPOTIFY_CLIENT_ID": os.getenv("SPOTIFY_CLIENT_ID", "").strip(),
+            "SPOTIFY_CLIENT_SECRET": os.getenv("SPOTIFY_CLIENT_SECRET", "").strip(),
+            "SPOTIFY_REDIRECT_URI": os.getenv("SPOTIFY_REDIRECT_URI", "").strip(),
         }
-        return values
-
-    def save_env_values(values: dict[str, str]) -> None:
-        for key, value in values.items():
-            os.environ[key] = value.strip()
-
-        settings = AppSettings.query.get(1) or AppSettings(id=1)
-        settings.flask_secret_key = values.get("FLASK_SECRET_KEY", "").strip()
-        settings.spotify_client_id = values.get("SPOTIFY_CLIENT_ID", "").strip()
-        settings.spotify_client_secret = values.get("SPOTIFY_CLIENT_SECRET", "").strip()
-        settings.spotify_redirect_uri = values.get("SPOTIFY_REDIRECT_URI", "").strip()
-        db.session.add(settings)
-        db.session.commit()
-
-        secret_value = str(values.get("FLASK_SECRET_KEY", app.config["SECRET_KEY"]) or "").strip()
-        app.config["SECRET_KEY"] = secret_value or app.config["SECRET_KEY"]
-        app.config["SPOTIFY_CLIENT_ID"] = values.get("SPOTIFY_CLIENT_ID", "").strip()
-        app.config["SPOTIFY_CLIENT_SECRET"] = values.get("SPOTIFY_CLIENT_SECRET", "").strip()
-        app.config["SPOTIFY_REDIRECT_URI"] = values.get("SPOTIFY_REDIRECT_URI", "").strip()
 
     def is_local_request_host() -> bool:
         return request.host.split(":", 1)[0].lower() in {"127.0.0.1", "localhost"}
@@ -294,7 +266,7 @@ def create_app() -> Flask:
             or not app.config["SPOTIFY_REDIRECT_URI"]
         ):
             flash(
-                "Completa la configuracion de Spotify en Perfil antes de iniciar sesion.",
+                "Faltan variables de entorno de Spotify. Configuralas en Railway antes de iniciar sesion.",
                 "danger",
             )
             return render_template("login.html", auth_url=None, effective_redirect_uri=get_effective_redirect_uri())
@@ -303,7 +275,7 @@ def create_app() -> Flask:
         configured_redirect = app.config["SPOTIFY_REDIRECT_URI"].strip()
         if not current_host_is_local and _is_local_redirect_uri(configured_redirect):
             flash(
-                "La Redirect URI guardada sigue apuntando a localhost. Actualizala en Perfil con la URL publica actual antes de iniciar sesion.",
+                "La variable SPOTIFY_REDIRECT_URI sigue apuntando a localhost. Actualizala en Railway con la URL publica actual antes de iniciar sesion.",
                 "warning",
             )
             return redirect(url_for("profile"))
@@ -326,7 +298,7 @@ def create_app() -> Flask:
         if error:
             if error == "server_error":
                 flash(
-                    "Spotify devolvio `server_error`. En local suele indicar que la Redirect URI registrada no coincide exactamente. Usa `http://127.0.0.1:8888/callback` en Perfil y en Spotify Developers.",
+                    "Spotify devolvio `server_error`. En local suele indicar que la Redirect URI registrada no coincide exactamente. Usa `http://127.0.0.1:8888/callback` en tu entorno y en Spotify Developers.",
                     "danger",
                 )
                 return redirect(url_for("profile"))
@@ -374,9 +346,9 @@ def create_app() -> Flask:
         stored_user.access_token = session.get("spotify_access_token", "")
         stored_user.refresh_token = session.get("spotify_refresh_token", "")
         stored_user.token_expires_at = int(session.get("spotify_expires_at", 0) or 0)
-        stored_user.client_id = app.config["SPOTIFY_CLIENT_ID"]
-        stored_user.client_secret = app.config["SPOTIFY_CLIENT_SECRET"]
-        stored_user.redirect_uri = redirect_uri
+        stored_user.client_id = app.config["SPOTIFY_CLIENT_ID"] or ""
+        stored_user.client_secret = app.config["SPOTIFY_CLIENT_SECRET"] or ""
+        stored_user.redirect_uri = redirect_uri or ""
         db.session.add(stored_user)
         db.session.commit()
         session.pop("spotify_oauth_state", None)
@@ -608,34 +580,16 @@ def create_app() -> Flask:
         output_path = builder.build(snapshot, selected_range)
         return send_file(output_path, as_attachment=True, download_name=output_path.name)
 
-    @app.route("/profile", methods=["GET", "POST"])
+    @app.route("/profile")
     def profile() -> Any:
-        if request.method == "POST":
-            action = request.form.get("action", "save")
-            values = {
-                "FLASK_SECRET_KEY": request.form.get("flask_secret_key", "").strip(),
-                "SPOTIFY_CLIENT_ID": request.form.get("spotify_client_id", "").strip(),
-                "SPOTIFY_CLIENT_SECRET": request.form.get("spotify_client_secret", "").strip(),
-                "SPOTIFY_REDIRECT_URI": request.form.get("spotify_redirect_uri", "").strip(),
-            }
-            save_env_values(values)
-            if action == "test_config":
-                try:
-                    get_spotify_client().verify_configuration()
-                    flash("Configuracion Spotify valida. Credenciales y Redirect URI listas para usarse.", "success")
-                except (SpotifyAuthError, SpotifyClientError) as exc:
-                    flash(str(exc), "danger")
-            else:
-                flash("Configuracion guardada correctamente en PostgreSQL.", "success")
-
         env_values = load_env_values()
         token_status = get_token_status()
         setup_steps = [
             "Entra en Spotify for Developers y crea una app nueva desde tu dashboard.",
-            "Pon un nombre a la app y acepta los terminos del portal de desarrolladores.",
-            "Copia tu Client ID y Client Secret en el formulario de esta pagina.",
-            "En la configuracion de la app, anade exactamente la misma Redirect URI que uses aqui.",
-            "Guarda los cambios, vuelve a Nozomi Music y pulsa iniciar sesion con Spotify.",
+            "En la configuracion de la app, anade exactamente la Redirect URI publica de Nozomi o `http://127.0.0.1:8888/callback` para local.",
+            "En Railway abre tu servicio y ve a Variables.",
+            "Configura `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI` y `FLASK_SECRET_KEY`.",
+            "Redeploya si hace falta y vuelve a Nozomi Music para iniciar sesion con Spotify.",
             "Si Spotify responde y el token es valido, ya puedes usar crear, exportar y recomendar.",
         ]
 
@@ -644,7 +598,6 @@ def create_app() -> Flask:
             env_values=env_values,
             token_status=token_status,
             setup_steps=setup_steps,
-            suggested_redirect_uri=get_suggested_redirect_uri(),
         )
 
     @app.errorhandler(413)

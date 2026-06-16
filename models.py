@@ -8,15 +8,6 @@ from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
 
 
-class AppSettings(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    spotify_client_id = db.Column(db.Text, nullable=False, default="")
-    spotify_client_secret = db.Column(db.Text, nullable=False, default="")
-    spotify_redirect_uri = db.Column(db.Text, nullable=False, default="")
-    flask_secret_key = db.Column(db.Text, nullable=False, default="")
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
 class SpotifyUser(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     spotify_user_id = db.Column(db.String(120), unique=True, nullable=False, index=True)
