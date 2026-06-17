@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
@@ -15,6 +14,7 @@ TIME_RANGE_LABELS = {
     "medium_term": "Ultimos 6 meses",
     "long_term": "Ultimo ano",
 }
+ENABLE_ARTIST_GENRES = False
 
 
 @dataclass
@@ -34,12 +34,12 @@ class StatsService:
 
     def __init__(self, spotify_client: SpotifyClient, user_id: str) -> None:
         self.spotify_client = spotify_client
-        self.artist_cache_service = ArtistCacheService(spotify_client)
+        self.artist_cache_service = ArtistCacheService(spotify_client) if ENABLE_ARTIST_GENRES else None
         self.cache_service = SpotifyApiCacheService(cache_scope=f"user:{user_id or 'anonymous'}")
 
     def build_snapshot(self, access_token: str) -> StatsSnapshot:
         snapshot_payload = self.cache_service.get_or_set(
-            cache_key="dashboard-snapshot:v1",
+            cache_key="dashboard-snapshot:v2",
             ttl_seconds=self.SNAPSHOT_TTL_SECONDS,
             source_endpoint="dashboard_snapshot",
             fetcher=lambda: self._build_snapshot_payload(access_token),
@@ -84,13 +84,6 @@ class StatsService:
                 "No se pudo cargar actividad reciente.",
             )
 
-            self._safe_fetch(
-                lambda: self._prefetch_artist_details(access_token, raw_top_tracks, raw_top_artists, raw_recent_tracks),
-                warnings,
-                None,
-                "No se pudieron precargar los generos de artistas.",
-            )
-
             top_tracks = {
                 key: self._normalize_top_tracks(access_token, tracks)
                 for key, tracks in raw_top_tracks.items()
@@ -101,12 +94,12 @@ class StatsService:
             }
             recent_tracks = self._normalize_recent_tracks(access_token, raw_recent_tracks)
 
-            top_genres = self._build_top_genres(top_tracks)
             summary = {
                 "playlist_count": len(playlists),
                 "recent_count": len(recent_tracks),
                 "top_track_count": sum(len(items) for items in top_tracks.values()),
-                "top_genre_count": len(top_genres),
+                "top_artist_count": sum(len(items) for items in top_artists.values()),
+                "top_genre_count": 0,
             }
 
             snapshot = StatsSnapshot(
@@ -115,13 +108,14 @@ class StatsService:
                 top_tracks=top_tracks,
                 top_artists=top_artists,
                 recent_tracks=recent_tracks,
-                top_genres=top_genres,
+                top_genres=[],
                 warnings=warnings,
                 generated_at=datetime.now().strftime("%d/%m/%Y %H:%M"),
             )
             return asdict(snapshot)
         finally:
-            self.artist_cache_service.log_metrics("dashboard")
+            if self.artist_cache_service is not None:
+                self.artist_cache_service.log_metrics("dashboard")
 
     @staticmethod
     def _safe_fetch(fetcher, warnings: list[str], fallback, warning_message: str):
@@ -138,13 +132,10 @@ class StatsService:
         normalized: list[dict[str, Any]] = []
         for index, artist in enumerate(artists, start=1):
             images = artist.get("images", []) or []
-            genres = self.artist_cache_service.get_artist_genres(access_token, artist)
             normalized.append(
                 {
                     "rank": index,
                     "name": artist.get("name", "Artista desconocido"),
-                    "genres": genres,
-                    "genres_label": ", ".join(genres[:2]) or "Sin genero disponible",
                     "image_url": images[0].get("url", "") if images else "",
                     "spotify_url": artist.get("external_urls", {}).get("spotify", ""),
                 }
@@ -167,14 +158,11 @@ class StatsService:
         for index, track in enumerate(tracks, start=1):
             album = track.get("album", {})
             images = album.get("images", []) or []
-            genres = self._get_track_genres(access_token, track)
             normalized.append(
                 {
                     "rank": index,
                     "name": track.get("name", "Sin titulo"),
                     "artists": ", ".join(artist.get("name", "") for artist in track.get("artists", [])),
-                    "genres": genres,
-                    "genres_label": ", ".join(genres[:2]) or "Sin genero disponible",
                     "album": album.get("name", "Album"),
                     "image_url": images[0].get("url", "") if images else "",
                     "spotify_url": track.get("external_urls", {}).get("spotify", ""),
@@ -188,7 +176,6 @@ class StatsService:
             track = item.get("track") or {}
             album = track.get("album", {})
             images = album.get("images", []) or []
-            genres = self._get_track_genres(access_token, track)
             played_at_raw = item.get("played_at", "")
             played_at_label = played_at_raw
             if played_at_raw:
@@ -200,8 +187,6 @@ class StatsService:
                 {
                     "name": track.get("name", "Sin titulo"),
                     "artists": ", ".join(artist.get("name", "") for artist in track.get("artists", [])),
-                    "genres": genres,
-                    "genres_label": ", ".join(genres[:2]) or "Sin genero disponible",
                     "played_at": played_at_raw,
                     "played_at_label": played_at_label,
                     "context_type": (item.get("context") or {}).get("type", ""),
@@ -210,58 +195,3 @@ class StatsService:
                 }
             )
         return normalized
-
-    def _get_track_genres(self, access_token: str, track: dict[str, Any]) -> list[str]:
-        artist_ids = [
-            str(artist.get("id", "")).strip()
-            for artist in track.get("artists", [])
-            if str(artist.get("id", "")).strip()
-        ]
-        artist_lookup = self.artist_cache_service.get_artists_lookup(access_token, artist_ids)
-        genres: list[str] = []
-        for artist_id in artist_ids:
-            for genre in artist_lookup.get(artist_id, {}).get("genres", []) or []:
-                if genre not in genres:
-                    genres.append(genre)
-        return sorted(genres)
-
-    def _prefetch_artist_details(
-        self,
-        access_token: str,
-        raw_top_tracks: dict[str, list[dict[str, Any]]],
-        raw_top_artists: dict[str, list[dict[str, Any]]],
-        raw_recent_tracks: list[dict[str, Any]],
-    ) -> None:
-        artist_ids: list[str] = []
-
-        for artists in raw_top_artists.values():
-            for artist in artists:
-                self.artist_cache_service.remember_artist_payload(artist)
-                artist_id = str(artist.get("id", "")).strip()
-                if artist_id and artist_id not in artist_ids:
-                    artist_ids.append(artist_id)
-
-        for tracks in raw_top_tracks.values():
-            for track in tracks:
-                self._collect_track_artist_ids(track, artist_ids)
-
-        for item in raw_recent_tracks:
-            self._collect_track_artist_ids(item.get("track") or {}, artist_ids)
-
-        self.artist_cache_service.get_artists_lookup(access_token, artist_ids)
-
-    @staticmethod
-    def _collect_track_artist_ids(track: dict[str, Any], artist_ids: list[str]) -> None:
-        for artist in track.get("artists", []):
-            artist_id = str(artist.get("id", "")).strip()
-            if artist_id and artist_id not in artist_ids:
-                artist_ids.append(artist_id)
-
-    @staticmethod
-    def _build_top_genres(top_tracks: dict[str, list[dict[str, Any]]]) -> list[tuple[str, int]]:
-        counter: Counter[str] = Counter()
-        for tracks in top_tracks.values():
-            for track in tracks:
-                for genre in track.get("genres", []):
-                    counter[genre] += 1
-        return counter.most_common(6)

@@ -32,7 +32,7 @@
     <div class="result-stat"><strong>{{ snapshot.summary.playlist_count }}</strong><span>playlists</span></div>
     <div class="result-stat"><strong>{{ snapshot.summary.recent_count }}</strong><span>recientes</span></div>
     <div class="result-stat"><strong>{{ snapshot.summary.top_track_count }}</strong><span>tops</span></div>
-    <div class="result-stat"><strong>{{ snapshot.summary.top_genre_count }}</strong><span>generos</span></div>
+    <div class="result-stat"><strong>{{ snapshot.summary.top_artist_count }}</strong><span>artists</span></div>
   </div>
 </section>
 
@@ -63,7 +63,6 @@
           <div>
             <strong>{{ track.name }}</strong>
             <p>{{ track.artists }}</p>
-            <p class="micro-note mb-0">{{ track.genres_label }}</p>
           </div>
           {% if track.spotify_url %}<a href="{{ track.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
         </article>
@@ -79,22 +78,9 @@
           <span class="dashboard-rank">{{ artist.rank }}</span>
           <div>
             <strong>{{ artist.name }}</strong>
-            <p>{{ artist.genres_label }}</p>
           </div>
         </article>
       {% endfor %}
-    </div>
-  </div>
-
-  <div class="content-panel dashboard-card">
-    <span class="eyebrow">Generos</span>
-    <div class="sample-chips mt-3">
-      {% for genre, count in snapshot.top_genres %}
-        <span class="genre-chip">{{ genre }} · {{ count }}</span>
-      {% endfor %}
-      {% if not snapshot.top_genres %}
-        <span class="micro-note">Sin datos suficientes.</span>
-      {% endif %}
     </div>
   </div>
 </section>
@@ -113,7 +99,6 @@
         <div>
           <strong>{{ track.name }}</strong>
           <p>{{ track.artists }}</p>
-          <p class="micro-note mb-0">{{ track.genres_label }}</p>
         </div>
         <span class="dashboard-context">{{ track.played_at_label }}{% if track.context_type %} · {{ track.context_type }}{% endif %}</span>
       </article>

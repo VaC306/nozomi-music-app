@@ -28,13 +28,13 @@
         <div class="stat"><strong>{{ snapshot.summary.playlist_count }}</strong><span class="muted">playlists</span></div>
         <div class="stat"><strong>{{ snapshot.summary.recent_count }}</strong><span class="muted">recientes</span></div>
         <div class="stat"><strong>{{ snapshot.summary.top_track_count }}</strong><span class="muted">tops</span></div>
-        <div class="stat"><strong>{{ snapshot.summary.top_genre_count }}</strong><span class="muted">generos</span></div>
+        <div class="stat"><strong>{{ snapshot.summary.top_artist_count }}</strong><span class="muted">artists</span></div>
       </div>
       <div class="panel">
         <h2>Top tracks</h2>
         <div class="list">
           {% for track in snapshot.top_tracks[selected_range] %}
-            <div class="item"><strong>{{ track.rank }}. {{ track.name }}</strong><span class="muted">{{ track.artists }}</span><br><span class="muted">{{ track.genres_label }}</span></div>
+            <div class="item"><strong>{{ track.rank }}. {{ track.name }}</strong><span class="muted">{{ track.artists }}</span></div>
           {% endfor %}
         </div>
       </div>
@@ -42,15 +42,7 @@
         <h2>Top artists</h2>
         <div class="list">
           {% for artist in snapshot.top_artists[selected_range] %}
-            <div class="item"><strong>{{ artist.rank }}. {{ artist.name }}</strong><span class="muted">{{ artist.genres_label }}</span></div>
-          {% endfor %}
-        </div>
-      </div>
-      <div class="panel">
-        <h2>Generos</h2>
-        <div class="chips">
-          {% for genre, count in snapshot.top_genres %}
-            <span class="chip">{{ genre }} · {{ count }}</span>
+            <div class="item"><strong>{{ artist.rank }}. {{ artist.name }}</strong></div>
           {% endfor %}
         </div>
       </div>

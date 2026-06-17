@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 class ArtistCacheMetrics:
     artist_ids_consulted: list[str]
     cache_hits: int
+    memory_cache_hits: int
+    persistent_cache_hits: int
+    cache_misses: int
 
 
 class ArtistCacheService:
@@ -28,7 +31,9 @@ class ArtistCacheService:
         self._client_credentials_token: str | None = None
         self._consulted_artist_ids: list[str] = []
         self._consulted_artist_ids_seen: set[str] = set()
-        self._cache_hits = 0
+        self._memory_cache_hits = 0
+        self._persistent_cache_hits = 0
+        self._cache_misses = 0
         self._pending_upserts: dict[str, dict[str, Any]] = {}
 
     def remember_artist_payload(self, artist: dict[str, Any]) -> None:
@@ -68,6 +73,7 @@ class ArtistCacheService:
             payload = self._artist_cache.get(artist_id)
             if payload:
                 lookup[artist_id] = payload
+                self._memory_cache_hits += 1
                 continue
             missing_artist_ids.append(artist_id)
 
@@ -82,7 +88,7 @@ class ArtistCacheService:
             payload = self._row_to_payload(cached_row)
             self._artist_cache[artist_id] = payload
             lookup[artist_id] = payload
-            self._cache_hits += 1
+            self._persistent_cache_hits += 1
 
         if remaining_artist_ids:
             for start in range(0, len(remaining_artist_ids), 50):
@@ -98,6 +104,7 @@ class ArtistCacheService:
                         payload = {"id": artist_id, "name": "", "genres": [], "popularity": 0}
                         self._artist_cache[artist_id] = payload
                         self._pending_upserts[artist_id] = payload
+                self._cache_misses += len(batch_ids)
 
         self.flush_pending_writes()
 
@@ -109,18 +116,24 @@ class ArtistCacheService:
     def get_metrics(self) -> ArtistCacheMetrics:
         return ArtistCacheMetrics(
             artist_ids_consulted=self._consulted_artist_ids.copy(),
-            cache_hits=self._cache_hits,
+            cache_hits=self._memory_cache_hits + self._persistent_cache_hits,
+            memory_cache_hits=self._memory_cache_hits,
+            persistent_cache_hits=self._persistent_cache_hits,
+            cache_misses=self._cache_misses,
         )
 
     def log_metrics(self, context: str) -> None:
         self.flush_pending_writes()
         metrics = self.get_metrics()
         logger.info(
-            "[%s] Spotify calls=%s artist_ids=%s cache_hits=%s",
+            "[%s] Spotify calls=%s artist_ids=%s cache_hits=%s memory_cache_hits=%s persistent_cache_hits=%s cache_misses=%s",
             context,
             self.spotify_client.spotify_call_count,
             metrics.artist_ids_consulted,
             metrics.cache_hits,
+            metrics.memory_cache_hits,
+            metrics.persistent_cache_hits,
+            metrics.cache_misses,
         )
 
     def _dedupe_artist_ids(self, artist_ids: list[str]) -> list[str]:
