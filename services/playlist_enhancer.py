@@ -20,6 +20,14 @@ class PlaylistEnhancer:
         self.cache_service = SpotifyApiCacheService(cache_scope=f"user:{user_id or 'anonymous'}")
 
     def build_playlist_report(self, access_token: str, playlist: dict[str, Any]) -> dict[str, Any]:
+        return self.build_playlist_report_with_mode(access_token, playlist)
+
+    def build_playlist_report_with_mode(
+        self,
+        access_token: str,
+        playlist: dict[str, Any],
+        cache_only: bool = False,
+    ) -> dict[str, Any]:
         playlist_id = str(playlist.get("id", "")).strip()
         if not playlist_id:
             raise SpotifyClientError("La playlist seleccionada no es valida.")
@@ -29,7 +37,7 @@ class PlaylistEnhancer:
                 cache_key=f"playlist-enhancer-report:v1:{playlist_id}",
                 ttl_seconds=self.REPORT_TTL_SECONDS,
                 source_endpoint="playlist_enhancer_report",
-                fetcher=lambda: self._build_playlist_report_uncached(access_token, playlist, playlist_id),
+                fetcher=lambda: self._build_playlist_report_uncached(access_token, playlist, playlist_id, cache_only),
             )
         finally:
             self.artist_cache_service.log_metrics("playlist-enhancer")
@@ -39,13 +47,21 @@ class PlaylistEnhancer:
         access_token: str,
         playlist: dict[str, Any],
         playlist_id: str,
+        cache_only: bool,
     ) -> dict[str, Any]:
-        playlist_tracks = self.cache_service.get_or_set(
-            cache_key=f"playlist-tracks:v1:{playlist_id}",
-            ttl_seconds=self.PLAYLIST_TRACKS_TTL_SECONDS,
-            source_endpoint="get_playlist_tracks",
-            fetcher=lambda: self.spotify_client.get_playlist_tracks(access_token, playlist_id),
-        )
+        cache_key = f"playlist-tracks:v1:{playlist_id}"
+        playlist_tracks = self.cache_service.get(cache_key, allow_stale=True)
+        if playlist_tracks is None and cache_only:
+            raise SpotifyClientError(
+                "No hay una copia en cache de esa playlist todavia. Desactiva 'solo cache' o fuerza un refresco cuando Spotify lo permita."
+            )
+        if playlist_tracks is None:
+            playlist_tracks = self.cache_service.get_or_set(
+                cache_key=cache_key,
+                ttl_seconds=self.PLAYLIST_TRACKS_TTL_SECONDS,
+                source_endpoint="get_playlist_tracks",
+                fetcher=lambda: self.spotify_client.get_playlist_tracks(access_token, playlist_id),
+            )
         tracks = self._normalize_playlist_tracks(access_token, playlist_tracks)
         if not tracks:
             raise SpotifyClientError("La playlist no tiene canciones analizables.")

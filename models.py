@@ -21,6 +21,8 @@ class SpotifyUser(db.Model):
     client_id = db.Column(db.Text, nullable=False, default="")
     client_secret = db.Column(db.Text, nullable=False, default="")
     redirect_uri = db.Column(db.Text, nullable=False, default="")
+    rate_limited_until = db.Column(db.DateTime, nullable=True, index=True)
+    forced_cache_until = db.Column(db.DateTime, nullable=True, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -73,3 +75,28 @@ class DashboardTopSnapshot(db.Model):
             name="uq_dashboard_top_snapshot_user_type_range",
         ),
     )
+
+
+class SpotifyMonitoringEvent(db.Model):
+    __tablename__ = "spotify_monitoring_event"
+
+    id = db.Column(db.Integer, primary_key=True)
+    spotify_user_id = db.Column(db.String(120), nullable=False, index=True, default="")
+    display_name = db.Column(db.String(255), nullable=False, default="Spotify User")
+    event_type = db.Column(db.String(60), nullable=False, index=True)
+    operation_name = db.Column(db.String(120), nullable=False, default="")
+    endpoint = db.Column(db.String(255), nullable=False, default="")
+    cache_hits = db.Column(db.Integer, nullable=False, default=0)
+    cache_misses = db.Column(db.Integer, nullable=False, default=0)
+    spotify_call_count = db.Column(db.Integer, nullable=False, default=0)
+    retry_after_seconds = db.Column(db.Integer, nullable=True)
+    details_json = db.Column(db.Text, nullable=False, default="{}")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class AppRuntimeState(db.Model):
+    __tablename__ = "app_runtime_state"
+
+    key = db.Column(db.String(120), primary_key=True)
+    value = db.Column(db.Text, nullable=False, default="")
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

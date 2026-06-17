@@ -5,18 +5,22 @@ from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from models import SpotifyApiCache, db
+from services.discord_monitoring import DiscordMonitoringService
 from services.spotify_client import SpotifyRateLimitError
 
 
 class SpotifyApiCacheService:
-    def __init__(self, cache_scope: str = "app") -> None:
+    def __init__(self, cache_scope: str = "app", monitoring_service: DiscordMonitoringService | None = None) -> None:
         self.cache_scope = cache_scope or "app"
+        self.monitoring_service = monitoring_service
 
     def get(self, cache_key: str, allow_stale: bool = False) -> Any | None:
         row = self._get_row(cache_key)
         if not row:
             return None
         if allow_stale or row.expires_at >= datetime.utcnow():
+            if self.monitoring_service is not None:
+                self.monitoring_service.record_cache_hit()
             return self._deserialize_payload(row.payload_json)
         return None
 
@@ -49,16 +53,24 @@ class SpotifyApiCacheService:
         source_endpoint: str,
         fetcher: Callable[[], Any],
         allow_stale_on_rate_limit: bool = True,
+        force_refresh: bool = False,
     ) -> Any:
         row = self._get_row(cache_key)
-        if row and row.expires_at >= datetime.utcnow():
+        if row and row.expires_at >= datetime.utcnow() and not force_refresh:
+            if self.monitoring_service is not None:
+                self.monitoring_service.record_cache_hit()
             return self._deserialize_payload(row.payload_json)
+
+        if self.monitoring_service is not None:
+            self.monitoring_service.record_cache_miss()
 
         stale_payload = self._deserialize_payload(row.payload_json) if row else None
         try:
             payload = fetcher()
         except SpotifyRateLimitError:
             if allow_stale_on_rate_limit and stale_payload is not None:
+                if self.monitoring_service is not None:
+                    self.monitoring_service.record_cache_hit()
                 return stale_payload
             raise
 

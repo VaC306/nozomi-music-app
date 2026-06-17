@@ -25,6 +25,12 @@
         <option value="{{ key }}" {% if selected_range == key %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
+    <span class="genre-chip">{{ 'Solo cache' if cache_mode == 'cache_only' or protection_state.cache_only_active else 'Normal' }}</span>
+    {% if protection_state.cache_only_active %}
+      <span class="btn btn-outline-light disabled" aria-disabled="true">Forzar refresco bloqueado</span>
+    {% else %}
+      <a class="btn btn-outline-light" href="{{ url_for('dashboard', range=selected_range, refresh_cache=1) }}">Forzar refresco de cache</a>
+    {% endif %}
     <a class="btn btn-outline-light" href="{{ url_for('dashboard_export', range=selected_range) }}">Exportar HTML</a>
   </form>
 
@@ -35,6 +41,14 @@
     <div class="result-stat"><strong>{{ snapshot.summary.top_artist_count }}</strong><span>artists</span></div>
   </div>
 </section>
+
+{% if protection_state.cache_only_active %}
+<section class="content-panel mb-4">
+  <span class="eyebrow">Proteccion Spotify</span>
+  <p class="panel-copy mt-3 mb-2">{{ protection_state.message }}</p>
+  <p class="micro-note mb-0">Tiempo restante: {{ protection_state.remaining_seconds }} segundos.</p>
+</section>
+{% endif %}
 
 {% if snapshot.warnings %}
 <section class="content-panel mb-4">

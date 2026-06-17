@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
@@ -16,11 +16,12 @@ from sqlalchemy import inspect, text
 
 from models import SpotifyUser, db
 from services.dashboard_report import DashboardReportBuilder
+from services.discord_monitoring import DiscordMonitoringService
 from services.playlist_enhancer import PlaylistEnhancer
 from services.playlist_manager import PlaylistImportError, PlaylistManager
 from services.prompt_generator import PromptGenerator, PromptGeneratorError
 from services.recommender import Recommender
-from services.spotify_client import SpotifyAuthError, SpotifyClient, SpotifyClientError
+from services.spotify_client import SpotifyAuthError, SpotifyClient, SpotifyClientError, SpotifyRateLimitError
 from services.stats_service import DASHBOARD_PREVIEW_ITEMS_LIMIT, StatsService, TIME_RANGE_LABELS
 
 
@@ -55,13 +56,38 @@ def create_app() -> Flask:
 
         if "fetched_at" not in existing_columns:
             timestamp_type = "TIMESTAMP" if dialect_name == "postgresql" else "DATETIME"
-            statements.append(
-                f"ALTER TABLE artist_genres_cache ADD COLUMN fetched_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP"
-            )
+            if dialect_name == "sqlite":
+                statements.append(f"ALTER TABLE artist_genres_cache ADD COLUMN fetched_at {timestamp_type}")
+            else:
+                statements.append(
+                    f"ALTER TABLE artist_genres_cache ADD COLUMN fetched_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP"
+                )
             if "updated_at" in existing_columns:
                 statements.append(
                     "UPDATE artist_genres_cache SET fetched_at = updated_at WHERE fetched_at IS NULL"
                 )
+
+        if not statements:
+            return
+
+        with db.engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+
+    def ensure_spotify_user_monitoring_schema() -> None:
+        inspector = inspect(db.engine)
+        if "spotify_user" not in inspector.get_table_names():
+            return
+
+        existing_columns = {column["name"] for column in inspector.get_columns("spotify_user")}
+        statements: list[str] = []
+        dialect_name = db.engine.dialect.name.lower()
+        timestamp_type = "TIMESTAMP" if dialect_name == "postgresql" else "DATETIME"
+
+        if "rate_limited_until" not in existing_columns:
+            statements.append(f"ALTER TABLE spotify_user ADD COLUMN rate_limited_until {timestamp_type}")
+        if "forced_cache_until" not in existing_columns:
+            statements.append(f"ALTER TABLE spotify_user ADD COLUMN forced_cache_until {timestamp_type}")
 
         if not statements:
             return
@@ -83,10 +109,10 @@ def create_app() -> Flask:
     app.config["SPOTIFY_CLIENT_ID"] = get_config_value("SPOTIFY_CLIENT_ID")
     app.config["SPOTIFY_CLIENT_SECRET"] = get_config_value("SPOTIFY_CLIENT_SECRET")
     app.config["SPOTIFY_REDIRECT_URI"] = get_config_value("SPOTIFY_REDIRECT_URI")
-    app.config["DEVELOPER_WEBHOOK_URL"] = get_config_value(
-        "DEVELOPER_WEBHOOK_URL",
-        "https://discord.com/api/webhooks/1516529826100674632/UliZM12aUSl--BjxieOGtVTbrYkyZwYtcSBjztJKPbLtBI96_ax-ol91bSNVjRjVpSYs",
-    )
+    app.config["USER_REQUEST_WEBHOOK"] = get_config_value("USER_REQUEST_WEBHOOK")
+    app.config["USER_RATE_WEBHOOK"] = get_config_value("USER_RATE_WEBHOOK")
+    app.config["ENABLE_DISCORD_MONITORING"] = get_config_value("ENABLE_DISCORD_MONITORING", "false")
+    app.config["DASHBOARD_REFRESH_LIMIT_24H"] = int(get_config_value("DASHBOARD_REFRESH_LIMIT_24H", "12") or 12)
     app.config["SPOTIFY_SCOPES"] = [
         "playlist-modify-public",
         "playlist-modify-private",
@@ -104,6 +130,12 @@ def create_app() -> Flask:
     with app.app_context():
         db.create_all()
         ensure_artist_cache_schema()
+        ensure_spotify_user_monitoring_schema()
+
+    monitoring_service = DiscordMonitoringService(app)
+
+    with app.app_context():
+        monitoring_service.maybe_send_daily_summary()
 
     def load_env_values() -> dict[str, str]:
         return {
@@ -125,12 +157,166 @@ def create_app() -> Flask:
             return suggested_redirect
         return configured_redirect
 
+    def get_current_spotify_user_identity() -> tuple[str, str]:
+        spotify_user = session.get("spotify_user", {}) or {}
+        spotify_user_id = str(spotify_user.get("id", "")).strip()
+        display_name = str(spotify_user.get("display_name", "")).strip() or spotify_user_id or "Spotify User"
+        return spotify_user_id, display_name
+
+    def format_utc_label(value: datetime | None) -> str:
+        if value is None:
+            return "-"
+        return value.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    def build_spotify_protection_state() -> dict[str, Any]:
+        spotify_user_id, display_name = get_current_spotify_user_identity()
+        state = {
+            "spotify_user_id": spotify_user_id,
+            "display_name": display_name,
+            "rate_limited_until": None,
+            "forced_cache_until": None,
+            "rate_limited_active": False,
+            "forced_cache_active": False,
+            "cache_only_active": False,
+            "message": "",
+            "remaining_seconds": 0,
+            "until_label": "-",
+        }
+        if not spotify_user_id:
+            return state
+
+        user = SpotifyUser.query.filter_by(spotify_user_id=spotify_user_id).first()
+        if user is None:
+            return state
+
+        now = datetime.utcnow()
+        forced_cache_until = user.forced_cache_until if user.forced_cache_until and user.forced_cache_until > now else None
+        rate_limited_until = user.rate_limited_until if user.rate_limited_until and user.rate_limited_until > now else None
+
+        if user.forced_cache_until and forced_cache_until is None:
+            user.forced_cache_until = None
+            db.session.add(user)
+            db.session.commit()
+        if user.rate_limited_until and rate_limited_until is None:
+            user.rate_limited_until = None
+            db.session.add(user)
+            db.session.commit()
+
+        state["rate_limited_until"] = rate_limited_until
+        state["forced_cache_until"] = forced_cache_until
+        state["rate_limited_active"] = rate_limited_until is not None
+        state["forced_cache_active"] = forced_cache_until is not None
+        state["cache_only_active"] = state["rate_limited_active"] or state["forced_cache_active"]
+
+        active_until = forced_cache_until or rate_limited_until
+        if active_until is not None:
+            state["remaining_seconds"] = max(int((active_until - now).total_seconds()), 0)
+            state["until_label"] = format_utc_label(active_until)
+
+        if forced_cache_until is not None:
+            state["message"] = (
+                "Se ha activado el modo cache temporal para proteger la aplicacion frente a los limites de Spotify. "
+                f"Podras volver a realizar actualizaciones el {format_utc_label(forced_cache_until)}."
+            )
+        elif rate_limited_until is not None:
+            state["message"] = (
+                "Spotify ha limitado temporalmente las solicitudes para esta cuenta. Puedes seguir utilizando los datos en cache. "
+                f"Proximo intento permitido: {format_utc_label(rate_limited_until)}."
+            )
+        return state
+
+    def enforce_spotify_protection() -> None:
+        state = build_spotify_protection_state()
+        if state["cache_only_active"]:
+            raise SpotifyRateLimitError(state["message"], blocked_until=state["forced_cache_until"] or state["rate_limited_until"])
+
+    def handle_spotify_rate_limit(endpoint: str, retry_after_seconds: int | None) -> datetime | None:
+        spotify_user_id, display_name = get_current_spotify_user_identity()
+        if not spotify_user_id:
+            operation = monitoring_service.get_operation()
+            monitoring_service.send_spotify_429_alert(
+                spotify_user_id=spotify_user_id,
+                display_name=display_name,
+                endpoint=endpoint,
+                retry_after_seconds=retry_after_seconds,
+                operation_calls=operation.spotify_calls if operation is not None else 0,
+            )
+            return None
+
+        user = SpotifyUser.query.filter_by(spotify_user_id=spotify_user_id).first()
+        if user is None:
+            return None
+
+        now = datetime.utcnow()
+        wait_seconds = max(int(retry_after_seconds or 0), 3600)
+        blocked_until = now + timedelta(seconds=wait_seconds)
+        user.rate_limited_until = blocked_until
+        db.session.add(user)
+        db.session.commit()
+
+        operation = monitoring_service.get_operation()
+        monitoring_service.record_event(
+            spotify_user_id=spotify_user_id,
+            display_name=display_name,
+            event_type="spotify_429",
+            operation_name=operation.operation_name if operation is not None else "",
+            endpoint=endpoint,
+            cache_hits=operation.cache_hits if operation is not None else 0,
+            cache_misses=operation.cache_misses if operation is not None else 0,
+            spotify_call_count=operation.spotify_calls if operation is not None else 0,
+            retry_after_seconds=retry_after_seconds,
+            details={"blocked_until": blocked_until.isoformat()},
+        )
+        monitoring_service.send_spotify_429_alert(
+            spotify_user_id=spotify_user_id,
+            display_name=display_name,
+            endpoint=endpoint,
+            retry_after_seconds=retry_after_seconds,
+            operation_calls=operation.spotify_calls if operation is not None else 0,
+        )
+        monitoring_service.send_user_blocked_alert(
+            spotify_user_id=spotify_user_id,
+            display_name=display_name,
+            retry_after_seconds=retry_after_seconds,
+            blocked_until=blocked_until,
+        )
+
+        recent_429_count = monitoring_service.count_recent_429s(spotify_user_id, window_hours=24)
+        if recent_429_count >= 2:
+            forced_cache_until = now + timedelta(hours=24)
+            if not user.forced_cache_until or user.forced_cache_until < forced_cache_until:
+                user.forced_cache_until = forced_cache_until
+                db.session.add(user)
+                db.session.commit()
+                monitoring_service.record_event(
+                    spotify_user_id=spotify_user_id,
+                    display_name=display_name,
+                    event_type="forced_cache_activated",
+                    operation_name=operation.operation_name if operation is not None else "",
+                    endpoint=endpoint,
+                    retry_after_seconds=retry_after_seconds,
+                    details={"forced_cache_until": forced_cache_until.isoformat(), "recent_429_count": recent_429_count},
+                )
+                monitoring_service.send_forced_cache_alert(
+                    spotify_user_id=spotify_user_id,
+                    display_name=display_name,
+                    recent_429_count=recent_429_count,
+                    forced_cache_until=forced_cache_until,
+                )
+        return blocked_until
+
     def get_spotify_client(redirect_uri: str | None = None) -> SpotifyClient:
+        spotify_user_id, display_name = get_current_spotify_user_identity()
         return SpotifyClient(
             client_id=app.config["SPOTIFY_CLIENT_ID"],
             client_secret=app.config["SPOTIFY_CLIENT_SECRET"],
             redirect_uri=(redirect_uri or get_effective_redirect_uri()),
             scopes=app.config["SPOTIFY_SCOPES"],
+            spotify_user_id=spotify_user_id,
+            display_name=display_name,
+            request_guard=enforce_spotify_protection if spotify_user_id else None,
+            spotify_call_listener=monitoring_service.record_spotify_call,
+            rate_limit_listener=handle_spotify_rate_limit if spotify_user_id else None,
         )
 
     def get_suggested_redirect_uri() -> str:
@@ -190,12 +376,28 @@ def create_app() -> Flask:
         if not access_token:
             raise SpotifyAuthError("No hay una sesion activa de Spotify.")
 
+        protection_state = build_spotify_protection_state()
+        if protection_state["cache_only_active"]:
+            return client
+
         if client.is_token_expired(expires_at):
             if not refresh_token:
                 raise SpotifyAuthError("La sesion de Spotify expiro. Vuelve a iniciar sesion.")
             token_data = client.refresh_access_token(refresh_token)
             _store_token_session(token_data)
         return client
+
+    def ensure_required_spotify_scopes(required_scopes: list[str], feature_name: str) -> None:
+        granted_scopes = set(session.get("spotify_scopes") or [])
+        missing_scopes = [scope for scope in required_scopes if scope not in granted_scopes]
+        if not missing_scopes:
+            return
+        raise SpotifyAuthError(
+            (
+                f"Tu sesion de Spotify no tiene los permisos necesarios para usar {feature_name}. "
+                "Cierra sesion y vuelve a entrar para renovar los permisos."
+            )
+        )
 
     def get_token_status() -> dict[str, Any]:
         access_token = session.get("spotify_access_token", "")
@@ -234,8 +436,40 @@ def create_app() -> Flask:
 
         return status
 
+    def get_playlist_cache_mode() -> str:
+        cache_mode = str(session.get("playlist_cache_mode", "cache_only")).strip().lower()
+        return cache_mode if cache_mode in {"cache_only", "normal"} else "cache_only"
+
+    def start_dashboard_operation() -> Any:
+        spotify_user_id, display_name = get_current_spotify_user_identity()
+        return monitoring_service.start_operation("dashboard_refresh", spotify_user_id, display_name)
+
+    def can_force_dashboard_refresh() -> tuple[bool, datetime | None, int]:
+        spotify_user_id, display_name = get_current_spotify_user_identity()
+        if not spotify_user_id:
+            return True, None, 0
+        limit = int(app.config["DASHBOARD_REFRESH_LIMIT_24H"] or 12)
+        refresh_count = monitoring_service.count_dashboard_refreshes_last_24h(spotify_user_id)
+        next_allowed_refresh_at = monitoring_service.get_next_dashboard_refresh_at(spotify_user_id, limit)
+        if refresh_count < limit or next_allowed_refresh_at is None:
+            return True, None, refresh_count
+        monitoring_service.record_event(
+            spotify_user_id=spotify_user_id,
+            display_name=display_name,
+            event_type="dashboard_quota_exceeded",
+            operation_name="dashboard_refresh",
+            details={"refresh_count_24h": refresh_count, "next_allowed_refresh_at": next_allowed_refresh_at.isoformat()},
+        )
+        monitoring_service.send_user_quota_alert(
+            spotify_user_id=spotify_user_id,
+            display_name=display_name,
+            refresh_count_24h=refresh_count,
+            next_allowed_refresh_at=next_allowed_refresh_at,
+        )
+        return False, next_allowed_refresh_at, refresh_count
+
     def send_developer_request(username: str, email: str) -> None:
-        webhook_url = app.config["DEVELOPER_WEBHOOK_URL"].strip()
+        webhook_url = app.config["USER_REQUEST_WEBHOOK"].strip()
         if not webhook_url:
             raise RuntimeError("No hay webhook configurado para enviar la solicitud.")
 
@@ -267,6 +501,7 @@ def create_app() -> Flask:
             "current_year": datetime.now().year,
             "request_endpoint": request.endpoint,
             "suggested_redirect_uri": get_suggested_redirect_uri(),
+            "spotify_protection_state": build_spotify_protection_state(),
         }
 
     @app.route("/")
@@ -497,6 +732,10 @@ def create_app() -> Flask:
     def export_playlist() -> Any:
         try:
             spotify_client = ensure_spotify_session()
+            ensure_required_spotify_scopes(
+                ["playlist-read-private", "playlist-read-collaborative"],
+                "la exportacion de playlists",
+            )
         except SpotifyAuthError as exc:
             flash(str(exc), "warning")
             return redirect(url_for("login"))
@@ -507,18 +746,32 @@ def create_app() -> Flask:
             user_id=str(session.get("spotify_user", {}).get("id", "")),
         )
         current_user_id = str(session.get("spotify_user", {}).get("id", ""))
+        cache_mode = get_playlist_cache_mode()
+        refresh_cache = request.method == "GET" and request.args.get("refresh_cache", "").strip() == "1"
+        protection_state = build_spotify_protection_state()
+        use_cache_only = cache_mode == "cache_only" or protection_state["cache_only_active"]
         search_query = request.form.get("playlist_query", "") if request.method == "POST" else ""
         selected_playlist_id = request.form.get("playlist_id", "") if request.method == "POST" else ""
+
+        if refresh_cache and protection_state["cache_only_active"]:
+            flash(protection_state["message"], "warning")
+            refresh_cache = False
+        if refresh_cache:
+            manager.clear_exportable_playlists_cache()
 
         try:
             all_playlists = manager.list_exportable_playlists(
                 spotify_client=spotify_client,
                 access_token=session["spotify_access_token"],
                 current_user_id=current_user_id,
+                prefer_cached=use_cache_only and not refresh_cache,
+                allow_stale=use_cache_only,
             )
         except SpotifyClientError as exc:
+            all_playlists = manager.get_cached_exportable_playlists(current_user_id)
             flash(str(exc), "danger")
-            all_playlists = []
+            if all_playlists:
+                flash("Mostramos una copia en cache de tus playlists para que el selector no se vacie.", "warning")
 
         if search_query.strip():
             playlists = [
@@ -541,6 +794,7 @@ def create_app() -> Flask:
                         spotify_client=spotify_client,
                         access_token=session["spotify_access_token"],
                         playlist=selected_playlist,
+                        cache_only=use_cache_only,
                     )
                     flash("Playlist exportada correctamente a TXT.", "success")
                 except (PlaylistImportError, SpotifyClientError) as exc:
@@ -552,6 +806,8 @@ def create_app() -> Flask:
             result=result,
             search_query=search_query,
             selected_playlist_id=selected_playlist_id,
+            cache_mode=cache_mode,
+            protection_state=protection_state,
         )
 
     @app.route("/exports/<path:filename>")
@@ -623,18 +879,32 @@ def create_app() -> Flask:
         )
         enhancer = PlaylistEnhancer(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
         current_user_id = str(session.get("spotify_user", {}).get("id", ""))
+        cache_mode = get_playlist_cache_mode()
+        refresh_cache = request.method == "GET" and request.args.get("refresh_cache", "").strip() == "1"
+        protection_state = build_spotify_protection_state()
+        use_cache_only = cache_mode == "cache_only" or protection_state["cache_only_active"]
         search_query = request.form.get("playlist_query", "") if request.method == "POST" else ""
         selected_playlist_id = request.form.get("playlist_id", "") if request.method == "POST" else ""
+
+        if refresh_cache and protection_state["cache_only_active"]:
+            flash(protection_state["message"], "warning")
+            refresh_cache = False
+        if refresh_cache:
+            manager.clear_exportable_playlists_cache()
 
         try:
             all_playlists = manager.list_exportable_playlists(
                 spotify_client=spotify_client,
                 access_token=session["spotify_access_token"],
                 current_user_id=current_user_id,
+                prefer_cached=use_cache_only and not refresh_cache,
+                allow_stale=use_cache_only,
             )
         except SpotifyClientError as exc:
+            all_playlists = manager.get_cached_exportable_playlists(current_user_id)
             flash(str(exc), "danger")
-            all_playlists = []
+            if all_playlists:
+                flash("Mostramos una copia en cache de tus playlists para que el selector no se vacie.", "warning")
 
         if search_query.strip():
             playlists = [
@@ -653,9 +923,10 @@ def create_app() -> Flask:
                 flash("Selecciona una playlist valida para analizar.", "danger")
             else:
                 try:
-                    report = enhancer.build_playlist_report(
+                    report = enhancer.build_playlist_report_with_mode(
                         access_token=session["spotify_access_token"],
                         playlist=selected_playlist,
+                        cache_only=use_cache_only,
                     )
                     flash("Playlist analizada correctamente.", "success")
                 except SpotifyClientError as exc:
@@ -667,6 +938,8 @@ def create_app() -> Flask:
             report=report,
             search_query=search_query,
             selected_playlist_id=selected_playlist_id,
+            cache_mode=cache_mode,
+            protection_state=protection_state,
         )
 
     @app.route("/prompt-generator", methods=["GET", "POST"])
@@ -707,19 +980,52 @@ def create_app() -> Flask:
         selected_range = request.args.get("range", "short_term").strip()
         if selected_range not in TIME_RANGE_LABELS:
             selected_range = "short_term"
+        cache_mode = get_playlist_cache_mode()
+        refresh_cache = request.args.get("refresh_cache", "").strip() == "1"
+        protection_state = build_spotify_protection_state()
+        use_cache_only = cache_mode == "cache_only" or protection_state["cache_only_active"]
 
-        stats_service = StatsService(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
+        if refresh_cache and protection_state["cache_only_active"]:
+            flash(protection_state["message"], "warning")
+            refresh_cache = False
+        elif refresh_cache:
+            refresh_allowed, next_allowed_refresh_at, refresh_count = can_force_dashboard_refresh()
+            if not refresh_allowed:
+                flash(
+                    "Has superado la cuota temporal de recargas forzadas del dashboard. "
+                    f"Llevas {refresh_count} refresh en 24h. Proximo refresh permitido: {format_utc_label(next_allowed_refresh_at)}.",
+                    "warning",
+                )
+                refresh_cache = False
+
+        stats_service = StatsService(
+            get_spotify_client(),
+            user_id=str(session.get("spotify_user", {}).get("id", "")),
+            monitoring_service=monitoring_service,
+        )
+        operation_token = start_dashboard_operation() if refresh_cache else None
+        operation_success = False
         try:
-            snapshot = stats_service.build_snapshot(session["spotify_access_token"])
+            snapshot = stats_service.build_snapshot_with_mode(
+                session["spotify_access_token"],
+                cache_only=use_cache_only and not refresh_cache,
+                force_refresh=refresh_cache,
+            )
+            operation_success = refresh_cache
         except SpotifyClientError as exc:
             flash(str(exc), "warning")
             return redirect(url_for("index"))
+        finally:
+            if operation_token is not None:
+                monitoring_service.finish_operation(operation_token, send_dashboard_summary=operation_success)
         return render_template(
             "dashboard.html",
             snapshot=snapshot,
             time_range_labels=TIME_RANGE_LABELS,
             selected_range=selected_range,
             preview_limit=DASHBOARD_PREVIEW_ITEMS_LIMIT,
+            cache_mode=cache_mode,
+            protection_state=protection_state,
         )
 
     @app.route("/dashboard/top/<item_type>")
@@ -737,13 +1043,44 @@ def create_app() -> Flask:
         if item_type not in {"tracks", "artists"}:
             flash("La lista solicitada no existe.", "warning")
             return redirect(url_for("dashboard", range=selected_range))
+        cache_mode = get_playlist_cache_mode()
+        refresh_cache = request.args.get("refresh_cache", "").strip() == "1"
+        protection_state = build_spotify_protection_state()
+        use_cache_only = cache_mode == "cache_only" or protection_state["cache_only_active"]
 
-        stats_service = StatsService(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
+        if refresh_cache and protection_state["cache_only_active"]:
+            flash(protection_state["message"], "warning")
+            refresh_cache = False
+        elif refresh_cache:
+            refresh_allowed, next_allowed_refresh_at, refresh_count = can_force_dashboard_refresh()
+            if not refresh_allowed:
+                flash(
+                    "Has superado la cuota temporal de recargas forzadas del dashboard. "
+                    f"Llevas {refresh_count} refresh en 24h. Proximo refresh permitido: {format_utc_label(next_allowed_refresh_at)}.",
+                    "warning",
+                )
+                refresh_cache = False
+
+        stats_service = StatsService(
+            get_spotify_client(),
+            user_id=str(session.get("spotify_user", {}).get("id", "")),
+            monitoring_service=monitoring_service,
+        )
+        operation_token = start_dashboard_operation() if refresh_cache else None
+        operation_success = False
         try:
-            snapshot = stats_service.build_snapshot(session["spotify_access_token"])
+            snapshot = stats_service.build_snapshot_with_mode(
+                session["spotify_access_token"],
+                cache_only=use_cache_only and not refresh_cache,
+                force_refresh=refresh_cache,
+            )
+            operation_success = refresh_cache
         except SpotifyClientError as exc:
             flash(str(exc), "warning")
             return redirect(url_for("dashboard", range=selected_range))
+        finally:
+            if operation_token is not None:
+                monitoring_service.finish_operation(operation_token, send_dashboard_summary=operation_success)
 
         items = stats_service.get_top_items(item_type=item_type, time_range=selected_range)
         if not items:
@@ -756,6 +1093,8 @@ def create_app() -> Flask:
             item_type=item_type,
             selected_range=selected_range,
             time_range_labels=TIME_RANGE_LABELS,
+            cache_mode=cache_mode,
+            protection_state=protection_state,
         )
 
     @app.route("/dashboard/export")
@@ -770,13 +1109,44 @@ def create_app() -> Flask:
         selected_range = request.args.get("range", "short_term").strip()
         if selected_range not in TIME_RANGE_LABELS:
             selected_range = "short_term"
+        cache_mode = get_playlist_cache_mode()
+        refresh_cache = request.args.get("refresh_cache", "").strip() == "1"
+        protection_state = build_spotify_protection_state()
+        use_cache_only = cache_mode == "cache_only" or protection_state["cache_only_active"]
 
-        stats_service = StatsService(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
+        if refresh_cache and protection_state["cache_only_active"]:
+            flash(protection_state["message"], "warning")
+            refresh_cache = False
+        elif refresh_cache:
+            refresh_allowed, next_allowed_refresh_at, refresh_count = can_force_dashboard_refresh()
+            if not refresh_allowed:
+                flash(
+                    "Has superado la cuota temporal de recargas forzadas del dashboard. "
+                    f"Llevas {refresh_count} refresh en 24h. Proximo refresh permitido: {format_utc_label(next_allowed_refresh_at)}.",
+                    "warning",
+                )
+                refresh_cache = False
+
+        stats_service = StatsService(
+            get_spotify_client(),
+            user_id=str(session.get("spotify_user", {}).get("id", "")),
+            monitoring_service=monitoring_service,
+        )
+        operation_token = start_dashboard_operation() if refresh_cache else None
+        operation_success = False
         try:
-            snapshot = stats_service.build_snapshot(session["spotify_access_token"])
+            snapshot = stats_service.build_snapshot_with_mode(
+                session["spotify_access_token"],
+                cache_only=use_cache_only and not refresh_cache,
+                force_refresh=refresh_cache,
+            )
+            operation_success = refresh_cache
         except SpotifyClientError as exc:
             flash(str(exc), "warning")
             return redirect(url_for("dashboard", range=selected_range))
+        finally:
+            if operation_token is not None:
+                monitoring_service.finish_operation(operation_token, send_dashboard_summary=operation_success)
         builder = DashboardReportBuilder(Path(app.config["EXPORT_FOLDER"]))
         output_path = builder.build(snapshot, selected_range)
         return send_file(output_path, as_attachment=True, download_name=output_path.name)
@@ -787,25 +1157,35 @@ def create_app() -> Flask:
             "username": "",
             "email": "",
         }
+        cache_mode = get_playlist_cache_mode()
 
         if request.method == "POST":
-            developer_form["username"] = request.form.get("developer_username", "").strip()
-            developer_form["email"] = request.form.get("developer_email", "").strip()
-
-            if not developer_form["username"]:
-                flash("Escribe tu usuario de Developers antes de enviar la solicitud.", "danger")
-            elif not developer_form["email"] or "@" not in developer_form["email"]:
-                flash("Introduce un correo valido para enviar la solicitud.", "danger")
+            form_action = request.form.get("form_action", "developer_request").strip()
+            if form_action == "cache_preferences":
+                cache_mode = request.form.get("cache_mode", cache_mode).strip().lower()
+                if cache_mode not in {"cache_only", "normal"}:
+                    cache_mode = "cache_only"
+                session["playlist_cache_mode"] = cache_mode
+                flash("Preferencia de cache actualizada.", "success")
+                return redirect(url_for("profile"))
             else:
-                try:
-                    send_developer_request(
-                        username=developer_form["username"],
-                        email=developer_form["email"],
-                    )
-                    flash("Solicitud enviada a Discord correctamente.", "success")
-                    return redirect(url_for("profile"))
-                except RuntimeError as exc:
-                    flash(str(exc), "danger")
+                developer_form["username"] = request.form.get("developer_username", "").strip()
+                developer_form["email"] = request.form.get("developer_email", "").strip()
+
+                if not developer_form["username"]:
+                    flash("Escribe tu usuario de Developers antes de enviar la solicitud.", "danger")
+                elif not developer_form["email"] or "@" not in developer_form["email"]:
+                    flash("Introduce un correo valido para enviar la solicitud.", "danger")
+                else:
+                    try:
+                        send_developer_request(
+                            username=developer_form["username"],
+                            email=developer_form["email"],
+                        )
+                        flash("Solicitud enviada a Discord correctamente.", "success")
+                        return redirect(url_for("profile"))
+                    except RuntimeError as exc:
+                        flash(str(exc), "danger")
 
         env_values = load_env_values()
         token_status = get_token_status()
@@ -824,6 +1204,7 @@ def create_app() -> Flask:
             env_values=env_values,
             token_status=token_status,
             setup_steps=setup_steps,
+            cache_mode=cache_mode,
         )
 
     @app.errorhandler(413)

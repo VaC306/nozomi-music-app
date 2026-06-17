@@ -7,8 +7,9 @@ from typing import Any
 
 from models import DashboardTopSnapshot, db
 from services.artist_cache_service import ArtistCacheService
+from services.discord_monitoring import DiscordMonitoringService
 from services.spotify_api_cache_service import SpotifyApiCacheService
-from services.spotify_client import SpotifyClient, SpotifyRateLimitError
+from services.spotify_client import SpotifyClient, SpotifyClientError, SpotifyRateLimitError
 
 
 TIME_RANGE_LABELS = {
@@ -35,21 +36,50 @@ class StatsSnapshot:
 
 class StatsService:
     SNAPSHOT_TTL_SECONDS = 600
+    SNAPSHOT_CACHE_KEY = "dashboard-snapshot:v3"
 
-    def __init__(self, spotify_client: SpotifyClient, user_id: str) -> None:
+    def __init__(
+        self,
+        spotify_client: SpotifyClient,
+        user_id: str,
+        monitoring_service: DiscordMonitoringService | None = None,
+    ) -> None:
         self.spotify_client = spotify_client
         self.user_id = user_id or "anonymous"
         self.artist_cache_service = ArtistCacheService(spotify_client) if ENABLE_ARTIST_GENRES else None
-        self.cache_service = SpotifyApiCacheService(cache_scope=f"user:{self.user_id}")
+        self.cache_service = SpotifyApiCacheService(
+            cache_scope=f"user:{self.user_id}",
+            monitoring_service=monitoring_service,
+        )
 
     def build_snapshot(self, access_token: str) -> StatsSnapshot:
+        return self.build_snapshot_with_mode(access_token)
+
+    def build_snapshot_with_mode(
+        self,
+        access_token: str,
+        cache_only: bool = False,
+        force_refresh: bool = False,
+    ) -> StatsSnapshot:
+        if cache_only:
+            snapshot_payload = self.cache_service.get(self.SNAPSHOT_CACHE_KEY, allow_stale=True)
+            if snapshot_payload is None:
+                raise SpotifyClientError(
+                    "No hay una copia en cache del dashboard todavia. Cambia a modo normal o fuerza un refresco cuando Spotify lo permita."
+                )
+            return StatsSnapshot(**snapshot_payload)
+
         snapshot_payload = self.cache_service.get_or_set(
-            cache_key="dashboard-snapshot:v3",
+            cache_key=self.SNAPSHOT_CACHE_KEY,
             ttl_seconds=self.SNAPSHOT_TTL_SECONDS,
             source_endpoint="dashboard_snapshot",
             fetcher=lambda: self._build_snapshot_payload(access_token),
+            force_refresh=force_refresh,
         )
         return StatsSnapshot(**snapshot_payload)
+
+    def clear_snapshot_cache(self) -> None:
+        self.cache_service.delete(self.SNAPSHOT_CACHE_KEY)
 
     def _build_snapshot_payload(self, access_token: str) -> dict[str, Any]:
         warnings: list[str] = []

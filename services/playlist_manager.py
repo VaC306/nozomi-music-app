@@ -45,9 +45,12 @@ def sanitize_filename(value: str) -> str:
 
 
 class PlaylistManager:
-    PLAYLISTS_TTL_SECONDS = 900
-    PLAYLIST_TRACKS_TTL_SECONDS = 1800
+    PLAYLISTS_TTL_SECONDS = 21600
+    PLAYLIST_TRACKS_TTL_SECONDS = 21600
     TRACK_SEARCH_TTL_SECONDS = 7776000
+
+    PLAYLISTS_CACHE_KEY = "user-playlists:v1"
+    PLAYLIST_TRACKS_CACHE_KEY_PREFIX = "playlist-tracks:v1:"
 
     def __init__(self, uploads_dir: Path, exports_dir: Path, user_id: str = "") -> None:
         self.uploads_dir = uploads_dir
@@ -158,19 +161,28 @@ class PlaylistManager:
         spotify_client: SpotifyClient,
         access_token: str,
         current_user_id: str,
+        prefer_cached: bool = False,
+        allow_stale: bool = False,
     ) -> list[dict[str, Any]]:
+        if prefer_cached:
+            cached_playlists = self.cache_service.get(self.PLAYLISTS_CACHE_KEY, allow_stale=allow_stale) or []
+            if cached_playlists:
+                return self._build_exportable_playlist_summaries(cached_playlists, current_user_id)
+
         playlists = self.cache_service.get_or_set(
-            cache_key="user-playlists:v1",
+            cache_key=self.PLAYLISTS_CACHE_KEY,
             ttl_seconds=self.PLAYLISTS_TTL_SECONDS,
             source_endpoint="get_user_playlists",
             fetcher=lambda: spotify_client.get_user_playlists(access_token),
         )
-        exportable = [
-            self._normalize_playlist_summary(spotify_client, access_token, playlist)
-            for playlist in playlists
-            if self._can_export_playlist(playlist, current_user_id)
-        ]
-        return sorted(exportable, key=lambda item: item.get("name", "").lower())
+        return self._build_exportable_playlist_summaries(playlists, current_user_id)
+
+    def clear_exportable_playlists_cache(self) -> None:
+        self.cache_service.delete(self.PLAYLISTS_CACHE_KEY)
+
+    def get_cached_exportable_playlists(self, current_user_id: str) -> list[dict[str, Any]]:
+        playlists = self.cache_service.get(self.PLAYLISTS_CACHE_KEY, allow_stale=True) or []
+        return self._build_exportable_playlist_summaries(playlists, current_user_id)
 
     def find_exportable_playlists(
         self,
@@ -178,12 +190,26 @@ class PlaylistManager:
         access_token: str,
         current_user_id: str,
         query: str,
+        prefer_cached: bool = False,
+        allow_stale: bool = False,
     ) -> list[dict[str, Any]]:
         query_key = query.strip().lower()
         if not query_key:
-            return self.list_exportable_playlists(spotify_client, access_token, current_user_id)
+            return self.list_exportable_playlists(
+                spotify_client,
+                access_token,
+                current_user_id,
+                prefer_cached=prefer_cached,
+                allow_stale=allow_stale,
+            )
 
-        playlists = self.list_exportable_playlists(spotify_client, access_token, current_user_id)
+        playlists = self.list_exportable_playlists(
+            spotify_client,
+            access_token,
+            current_user_id,
+            prefer_cached=prefer_cached,
+            allow_stale=allow_stale,
+        )
         exact_matches: list[dict[str, Any]] = []
         partial_matches: list[dict[str, Any]] = []
 
@@ -204,14 +230,22 @@ class PlaylistManager:
         spotify_client: SpotifyClient,
         access_token: str,
         playlist: dict[str, Any],
+        cache_only: bool = False,
     ) -> dict[str, Any]:
         playlist_id = str(playlist.get("id", "")).strip()
-        tracks = self.cache_service.get_or_set(
-            cache_key=f"playlist-tracks:v1:{playlist_id}",
-            ttl_seconds=self.PLAYLIST_TRACKS_TTL_SECONDS,
-            source_endpoint="get_playlist_tracks",
-            fetcher=lambda: spotify_client.get_playlist_tracks(access_token, playlist_id),
-        )
+        cache_key = f"{self.PLAYLIST_TRACKS_CACHE_KEY_PREFIX}{playlist_id}"
+        tracks = self.cache_service.get(cache_key, allow_stale=True)
+        if tracks is None and cache_only:
+            raise PlaylistImportError(
+                "No hay una copia en cache de esa playlist todavia. Desactiva 'solo cache' o fuerza un refresco cuando Spotify lo permita."
+            )
+        if tracks is None:
+            tracks = self.cache_service.get_or_set(
+                cache_key=cache_key,
+                ttl_seconds=self.PLAYLIST_TRACKS_TTL_SECONDS,
+                source_endpoint="get_playlist_tracks",
+                fetcher=lambda: spotify_client.get_playlist_tracks(access_token, playlist_id),
+            )
         if not tracks:
             raise PlaylistImportError("La playlist no tiene canciones para exportar.")
 
@@ -243,28 +277,24 @@ class PlaylistManager:
             "file_path": output_path,
         }
 
+    def _build_exportable_playlist_summaries(
+        self,
+        playlists: list[dict[str, Any]],
+        current_user_id: str,
+    ) -> list[dict[str, Any]]:
+        exportable = [
+            self._normalize_playlist_summary(playlist)
+            for playlist in playlists
+            if self._can_export_playlist(playlist, current_user_id)
+        ]
+        return sorted(exportable, key=lambda item: item.get("name", "").lower())
+
     @staticmethod
-    def _normalize_playlist_summary(
-        spotify_client: SpotifyClient,
-        access_token: str,
-        playlist: dict[str, Any],
-    ) -> dict[str, Any]:
+    def _normalize_playlist_summary(playlist: dict[str, Any]) -> dict[str, Any]:
         owner = playlist.get("owner") or {}
         tracks = playlist.get("tracks") or {}
         owner_name = owner.get("display_name") or owner.get("id", "Spotify")
         track_total = tracks.get("total")
-        if not isinstance(track_total, int):
-            playlist_id = str(playlist.get("id", "")).strip()
-            if playlist_id:
-                try:
-                    playlist_details = spotify_client.get_playlist(access_token, playlist_id)
-                    if isinstance(playlist_details.get("owner"), dict):
-                        owner = playlist_details.get("owner") or owner
-                        owner_name = owner.get("display_name") or owner.get("id", owner_name)
-                    playlist = {**playlist, **playlist_details}
-                    track_total = spotify_client.get_playlist_track_count(access_token, playlist_id)
-                except Exception:  # noqa: BLE001
-                    track_total = 0
         if not isinstance(track_total, int):
             track_total = 0
         return {

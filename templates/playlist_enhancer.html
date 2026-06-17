@@ -26,12 +26,30 @@
   </div>
 </section>
 
+{% if protection_state.cache_only_active %}
+<section class="content-panel mb-4">
+  <span class="eyebrow">Proteccion Spotify</span>
+  <p class="panel-copy mt-3 mb-2">{{ protection_state.message }}</p>
+  <p class="micro-note mb-0">Tiempo restante: {{ protection_state.remaining_seconds }} segundos.</p>
+</section>
+{% endif %}
+
 <section class="row g-4 align-items-start">
   <div class="col-xl-7">
     <div class="content-panel h-100 form-panel">
       <div class="section-heading mb-4">
         <span class="eyebrow">Selector</span>
         <h2 class="section-title">Elige la playlist que quieres pulir</h2>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 align-items-center mb-4">
+        <span class="mini-label">Modo actual</span>
+        <span class="genre-chip">{{ 'Solo cache' if cache_mode == 'cache_only' or protection_state.cache_only_active else 'Normal' }}</span>
+        {% if protection_state.cache_only_active %}
+          <span class="btn btn-outline-light btn-sm disabled" aria-disabled="true">Refresco bloqueado</span>
+        {% else %}
+          <a href="{{ url_for('playlist_enhancer', refresh_cache=1) }}" class="btn btn-outline-light btn-sm">Forzar refresco de cache</a>
+        {% endif %}
       </div>
 
       <form method="post" class="playlist-form">
@@ -80,6 +98,14 @@
         <div class="d-flex flex-wrap gap-3">
           <button type="submit" class="btn btn-spotify btn-lg">Analizar playlist</button>
           <a href="{{ url_for('playlist_enhancer') }}" class="btn btn-outline-light btn-lg">Limpiar filtro</a>
+        </div>
+
+        <div class="form-hint mt-3">
+          {% if cache_mode == 'cache_only' or protection_state.cache_only_active %}
+            Solo cache: no haremos llamadas nuevas a Spotify desde esta pantalla. Puedes cambiarlo en Perfil.
+          {% else %}
+            Normal: usaremos cache y solo llamaremos a Spotify cuando haga falta. Puedes cambiarlo en Perfil.
+          {% endif %}
         </div>
       </form>
     </div>

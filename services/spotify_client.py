@@ -5,7 +5,8 @@ import logging
 import os
 import threading
 import time
-from typing import Any
+from datetime import datetime
+from typing import Any, Callable
 from urllib.parse import quote
 
 import requests
@@ -34,9 +35,11 @@ class SpotifyRateLimitError(SpotifyClientError):
         message: str,
         retry_after_seconds: int | None = None,
         status_code: int | None = None,
+        blocked_until: datetime | None = None,
     ) -> None:
         super().__init__(message, status_code=status_code)
         self.retry_after_seconds = retry_after_seconds
+        self.blocked_until = blocked_until
 
 
 class SpotifyClient:
@@ -48,11 +51,27 @@ class SpotifyClient:
     _RATE_LIMIT_LOCK = threading.Lock()
     _RATE_LIMITED_UNTIL = 0.0
 
-    def __init__(self, client_id: str, client_secret: str, redirect_uri: str, scopes: list[str]) -> None:
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+        scopes: list[str],
+        spotify_user_id: str = "",
+        display_name: str = "",
+        request_guard: Callable[[], None] | None = None,
+        spotify_call_listener: Callable[[str], None] | None = None,
+        rate_limit_listener: Callable[[str, int | None], datetime | None] | None = None,
+    ) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
         self.scopes = scopes
+        self.spotify_user_id = spotify_user_id.strip()
+        self.display_name = display_name.strip() or self.spotify_user_id or "Spotify User"
+        self.request_guard = request_guard
+        self.spotify_call_listener = spotify_call_listener
+        self.rate_limit_listener = rate_limit_listener
         self.session = requests.Session()
         self.spotify_call_count = 0
 
@@ -144,10 +163,7 @@ class SpotifyClient:
     def get_user_playlists(self, access_token: str) -> list[dict[str, Any]]:
         playlists: list[dict[str, Any]] = []
         endpoint = "/me/playlists"
-        params: dict[str, Any] | None = {
-            "limit": 50,
-            "fields": "items(id,name,owner(display_name,id),tracks(total),collaborative,external_urls(spotify)),next",
-        }
+        params: dict[str, Any] | None = {"limit": 50}
 
         while endpoint:
             data = self.request(access_token, "GET", endpoint, params=params)
@@ -326,12 +342,18 @@ class SpotifyClient:
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if self.request_guard is not None:
+            self.request_guard()
         self._raise_if_rate_limited()
         url = endpoint if endpoint.startswith("http") else f"{self.API_BASE_URL}{endpoint}"
         headers = {"Authorization": f"Bearer {access_token}"}
         with self._REQUEST_SEMAPHORE:
+            if self.request_guard is not None:
+                self.request_guard()
             self._raise_if_rate_limited()
             self.spotify_call_count += 1
+            if self.spotify_call_listener is not None:
+                self.spotify_call_listener(endpoint)
             try:
                 response = self.session.request(
                     method=method,
@@ -345,7 +367,11 @@ class SpotifyClient:
                 raise SpotifyClientError("No se pudo conectar con Spotify.") from exc
 
         if response.status_code >= 400:
-            self._raise_api_error(response)
+            blocked_until = None
+            if response.status_code == 429 and self.rate_limit_listener is not None:
+                retry_after = self._parse_retry_after(response.headers.get("Retry-After", ""))
+                blocked_until = self.rate_limit_listener(endpoint, retry_after)
+            self._raise_api_error(response, endpoint=endpoint, blocked_until=blocked_until)
 
         if not response.text:
             return {}
@@ -382,7 +408,12 @@ class SpotifyClient:
         return f"Basic {base64.b64encode(raw).decode('utf-8')}"
 
     @classmethod
-    def _raise_api_error(cls, response: requests.Response) -> None:
+    def _raise_api_error(
+        cls,
+        response: requests.Response,
+        endpoint: str = "",
+        blocked_until: datetime | None = None,
+    ) -> None:
         message = "Error al comunicarse con Spotify."
         response_payload: Any = None
         try:
@@ -415,6 +446,11 @@ class SpotifyClient:
                 "La sesion de Spotify ya no es valida. Vuelve a iniciar sesion.",
                 status_code=response.status_code,
             )
+        if response.status_code == 403 and "insufficient client scope" in message.lower():
+            raise SpotifyAuthError(
+                "A tu sesion de Spotify le faltan permisos para esta accion. Cierra sesion y vuelve a entrar.",
+                status_code=response.status_code,
+            )
         if response.status_code == 429:
             retry_after = cls._parse_retry_after(response.headers.get("Retry-After", ""))
             cls._activate_rate_limit(retry_after)
@@ -427,6 +463,7 @@ class SpotifyClient:
                 f"Spotify esta recibiendo demasiadas solicitudes ahora mismo y pausamos las llamadas para proteger la app.{detail}",
                 retry_after_seconds=retry_after,
                 status_code=response.status_code,
+                blocked_until=blocked_until,
             )
         if response.status_code >= 500:
             raise SpotifyClientError(
