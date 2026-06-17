@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
+from models import DashboardTopSnapshot, db
 from services.artist_cache_service import ArtistCacheService
 from services.spotify_api_cache_service import SpotifyApiCacheService
 from services.spotify_client import SpotifyClient, SpotifyRateLimitError
@@ -15,6 +17,8 @@ TIME_RANGE_LABELS = {
     "long_term": "Ultimo ano",
 }
 ENABLE_ARTIST_GENRES = False
+DASHBOARD_TOP_ITEMS_LIMIT = 50
+DASHBOARD_PREVIEW_ITEMS_LIMIT = 10
 
 
 @dataclass
@@ -34,12 +38,13 @@ class StatsService:
 
     def __init__(self, spotify_client: SpotifyClient, user_id: str) -> None:
         self.spotify_client = spotify_client
+        self.user_id = user_id or "anonymous"
         self.artist_cache_service = ArtistCacheService(spotify_client) if ENABLE_ARTIST_GENRES else None
-        self.cache_service = SpotifyApiCacheService(cache_scope=f"user:{user_id or 'anonymous'}")
+        self.cache_service = SpotifyApiCacheService(cache_scope=f"user:{self.user_id}")
 
     def build_snapshot(self, access_token: str) -> StatsSnapshot:
         snapshot_payload = self.cache_service.get_or_set(
-            cache_key="dashboard-snapshot:v2",
+            cache_key="dashboard-snapshot:v3",
             ttl_seconds=self.SNAPSHOT_TTL_SECONDS,
             source_endpoint="dashboard_snapshot",
             fetcher=lambda: self._build_snapshot_payload(access_token),
@@ -59,7 +64,7 @@ class StatsService:
 
             raw_top_tracks = {
                 key: self._safe_fetch(
-                    lambda key=key: self.spotify_client.get_top_tracks(access_token, key, limit=5),
+                    lambda key=key: self.spotify_client.get_top_tracks(access_token, key, limit=DASHBOARD_TOP_ITEMS_LIMIT),
                     warnings,
                     [],
                     f"No se pudieron cargar top tracks para {TIME_RANGE_LABELS[key]}",
@@ -69,7 +74,7 @@ class StatsService:
 
             raw_top_artists = {
                 key: self._safe_fetch(
-                    lambda key=key: self.spotify_client.get_top_artists(access_token, key, limit=5),
+                    lambda key=key: self.spotify_client.get_top_artists(access_token, key, limit=DASHBOARD_TOP_ITEMS_LIMIT),
                     warnings,
                     [],
                     f"No se pudieron cargar top artists para {TIME_RANGE_LABELS[key]}",
@@ -93,12 +98,13 @@ class StatsService:
                 for key, artists in raw_top_artists.items()
             }
             recent_tracks = self._normalize_recent_tracks(access_token, raw_recent_tracks)
+            self._store_top_snapshots(top_tracks=top_tracks, top_artists=top_artists)
 
             summary = {
                 "playlist_count": len(playlists),
                 "recent_count": len(recent_tracks),
-                "top_track_count": sum(len(items) for items in top_tracks.values()),
-                "top_artist_count": sum(len(items) for items in top_artists.values()),
+                "top_track_count": max((len(items) for items in top_tracks.values()), default=0),
+                "top_artist_count": max((len(items) for items in top_artists.values()), default=0),
                 "top_genre_count": 0,
             }
 
@@ -116,6 +122,22 @@ class StatsService:
         finally:
             if self.artist_cache_service is not None:
                 self.artist_cache_service.log_metrics("dashboard")
+
+    def get_top_items(self, item_type: str, time_range: str) -> list[dict[str, Any]]:
+        if item_type not in {"tracks", "artists"}:
+            return []
+        row = DashboardTopSnapshot.query.filter_by(
+            spotify_user_id=self.user_id,
+            snapshot_type=item_type,
+            time_range=time_range,
+        ).first()
+        if row is None:
+            return []
+        try:
+            payload = json.loads(row.payload_json or "[]")
+        except json.JSONDecodeError:
+            return []
+        return payload if isinstance(payload, list) else []
 
     @staticmethod
     def _safe_fetch(fetcher, warnings: list[str], fallback, warning_message: str):
@@ -141,6 +163,33 @@ class StatsService:
                 }
             )
         return normalized
+
+    def _store_top_snapshots(
+        self,
+        top_tracks: dict[str, list[dict[str, Any]]],
+        top_artists: dict[str, list[dict[str, Any]]],
+    ) -> None:
+        for snapshot_type, payload_by_range in {
+            "tracks": top_tracks,
+            "artists": top_artists,
+        }.items():
+            for time_range, items in payload_by_range.items():
+                row = DashboardTopSnapshot.query.filter_by(
+                    spotify_user_id=self.user_id,
+                    snapshot_type=snapshot_type,
+                    time_range=time_range,
+                ).first()
+                if row is None:
+                    row = DashboardTopSnapshot(
+                        spotify_user_id=self.user_id,
+                        snapshot_type=snapshot_type,
+                        time_range=time_range,
+                    )
+                row.payload_json = json.dumps(items)
+                row.fetched_at = datetime.utcnow()
+                row.updated_at = datetime.utcnow()
+                db.session.add(row)
+        db.session.commit()
 
     @staticmethod
     def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:

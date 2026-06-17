@@ -21,7 +21,7 @@ from services.playlist_manager import PlaylistImportError, PlaylistManager
 from services.prompt_generator import PromptGenerator, PromptGeneratorError
 from services.recommender import Recommender
 from services.spotify_client import SpotifyAuthError, SpotifyClient, SpotifyClientError
-from services.stats_service import StatsService, TIME_RANGE_LABELS
+from services.stats_service import DASHBOARD_PREVIEW_ITEMS_LIMIT, StatsService, TIME_RANGE_LABELS
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -719,6 +719,43 @@ def create_app() -> Flask:
             snapshot=snapshot,
             time_range_labels=TIME_RANGE_LABELS,
             selected_range=selected_range,
+            preview_limit=DASHBOARD_PREVIEW_ITEMS_LIMIT,
+        )
+
+    @app.route("/dashboard/top/<item_type>")
+    @login_required
+    def dashboard_top_list(item_type: str) -> Any:
+        try:
+            ensure_spotify_session()
+        except SpotifyAuthError as exc:
+            flash(str(exc), "warning")
+            return redirect(url_for("login"))
+
+        selected_range = request.args.get("range", "short_term").strip()
+        if selected_range not in TIME_RANGE_LABELS:
+            selected_range = "short_term"
+        if item_type not in {"tracks", "artists"}:
+            flash("La lista solicitada no existe.", "warning")
+            return redirect(url_for("dashboard", range=selected_range))
+
+        stats_service = StatsService(get_spotify_client(), user_id=str(session.get("spotify_user", {}).get("id", "")))
+        try:
+            snapshot = stats_service.build_snapshot(session["spotify_access_token"])
+        except SpotifyClientError as exc:
+            flash(str(exc), "warning")
+            return redirect(url_for("dashboard", range=selected_range))
+
+        items = stats_service.get_top_items(item_type=item_type, time_range=selected_range)
+        if not items:
+            items = snapshot.top_tracks[selected_range] if item_type == "tracks" else snapshot.top_artists[selected_range]
+
+        return render_template(
+            "dashboard_top_list.html",
+            snapshot=snapshot,
+            items=items,
+            item_type=item_type,
+            selected_range=selected_range,
+            time_range_labels=TIME_RANGE_LABELS,
         )
 
     @app.route("/dashboard/export")

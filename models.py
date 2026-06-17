@@ -52,3 +52,24 @@ class SpotifyApiCache(db.Model):
     __table_args__ = (
         db.UniqueConstraint("cache_scope", "cache_key", name="uq_spotify_api_cache_scope_key"),
     )
+
+
+class DashboardTopSnapshot(db.Model):
+    __tablename__ = "dashboard_top_snapshot"
+
+    id = db.Column(db.Integer, primary_key=True)
+    spotify_user_id = db.Column(db.String(120), nullable=False, index=True)
+    snapshot_type = db.Column(db.String(20), nullable=False, index=True)
+    time_range = db.Column(db.String(20), nullable=False, index=True)
+    payload_json = db.Column(db.Text, nullable=False, default="[]")
+    fetched_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "spotify_user_id",
+            "snapshot_type",
+            "time_range",
+            name="uq_dashboard_top_snapshot_user_type_range",
+        ),
+    )

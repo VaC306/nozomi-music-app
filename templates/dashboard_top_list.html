@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Top {{ item_type }} · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel dashboard-hero mb-4">
+  <div class="row g-4 align-items-end">
+    <div class="col-lg-8">
+      <span class="eyebrow">{{ "Top tracks" if item_type == "tracks" else "Top artists" }}</span>
+      <h1 class="section-title mt-3">Top 50 · {{ time_range_labels[selected_range] }}</h1>
+      <p class="panel-copy mt-2 mb-0">Lista completa almacenada para comparativas y futuros Wrapped personalizados.</p>
+    </div>
+    <div class="col-lg-4">
+      <div class="dashboard-meta">
+        <span>{{ snapshot.generated_at }}</span>
+        <a href="{{ url_for('dashboard', range=selected_range) }}">Volver al dashboard</a>
+      </div>
+    </div>
+  </div>
+
+  <form method="get" class="d-flex flex-wrap gap-3 align-items-center mt-4 dashboard-toolbar">
+    <select name="range" class="form-select nozomi-input dashboard-select" onchange="this.form.submit()">
+      {% for key, label in time_range_labels.items() %}
+        <option value="{{ key }}" {% if selected_range == key %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</section>
+
+<section class="content-panel dashboard-card">
+  <div class="dashboard-list">
+    {% for item in items %}
+      <article class="dashboard-item {% if item_type == 'artists' %}dashboard-item-compact{% endif %}">
+        <span class="dashboard-rank">{{ item.rank }}</span>
+        {% if item_type == 'tracks' %}
+          {% if item.image_url %}<img src="{{ item.image_url }}" alt="{{ item.name }}" class="dashboard-thumb">{% else %}<div class="dashboard-thumb dashboard-thumb-placeholder">♪</div>{% endif %}
+        {% endif %}
+        <div>
+          <strong>{{ item.name }}</strong>
+          {% if item_type == 'tracks' %}
+            <p>{{ item.artists }}</p>
+            <p class="micro-note mb-0">{{ item.album }}</p>
+          {% endif %}
+        </div>
+        {% if item.spotify_url %}<a href="{{ item.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

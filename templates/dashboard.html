@@ -52,11 +52,11 @@
     <div class="section-heading mb-3">
       <div>
         <span class="eyebrow">Top tracks</span>
-        <h2 class="section-title">{{ time_range_labels[selected_range] }}</h2>
+        <h2 class="section-title">Top {{ preview_limit }} · {{ time_range_labels[selected_range] }}</h2>
       </div>
     </div>
     <div class="dashboard-list">
-      {% for track in snapshot.top_tracks[selected_range] %}
+      {% for track in snapshot.top_tracks[selected_range][:preview_limit] %}
         <article class="dashboard-item">
           <span class="dashboard-rank">{{ track.rank }}</span>
           {% if track.image_url %}<img src="{{ track.image_url }}" alt="{{ track.name }}" class="dashboard-thumb">{% else %}<div class="dashboard-thumb dashboard-thumb-placeholder">♪</div>{% endif %}
@@ -68,12 +68,20 @@
         </article>
       {% endfor %}
     </div>
+    <div class="mt-3">
+      <a class="btn btn-outline-light" href="{{ url_for('dashboard_top_list', item_type='tracks', range=selected_range) }}">Ver top 50</a>
+    </div>
   </div>
 
   <div class="content-panel dashboard-card">
-    <span class="eyebrow">Top artists</span>
+    <div class="section-heading mb-3">
+      <div>
+        <span class="eyebrow">Top artists</span>
+        <h2 class="section-title">Top {{ preview_limit }} · {{ time_range_labels[selected_range] }}</h2>
+      </div>
+    </div>
     <div class="dashboard-list mt-3">
-      {% for artist in snapshot.top_artists[selected_range][:4] %}
+      {% for artist in snapshot.top_artists[selected_range][:preview_limit] %}
         <article class="dashboard-item dashboard-item-compact">
           <span class="dashboard-rank">{{ artist.rank }}</span>
           <div>
@@ -81,6 +89,9 @@
           </div>
         </article>
       {% endfor %}
+    </div>
+    <div class="mt-3">
+      <a class="btn btn-outline-light" href="{{ url_for('dashboard_top_list', item_type='artists', range=selected_range) }}">Ver top 50</a>
     </div>
   </div>
 </section>
