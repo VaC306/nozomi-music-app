@@ -7,6 +7,7 @@ Aplicacion web en Flask para trabajar con Spotify desde una interfaz propia: ini
 - Login OAuth con Spotify.
 - Creacion de playlists privadas a partir de un archivo `.txt`.
 - Exportacion de playlists propias o colaborativas a `.txt`.
+- Biblioteca personal con canciones guardadas, albumes guardados, artistas seguidos y exportacion a `.txt`.
 - Analisis de playlists con sugerencias para anadir, quitar y reordenar canciones.
 - Descubrimiento musical por artista y recomendaciones relacionadas.
 - Dashboard con top tracks, top artists y actividad reciente.
@@ -130,7 +131,28 @@ Para ello combina:
 
 Si Spotify limita llamadas o un endpoint falla, la app intenta apoyarse en cache para no vaciar la experiencia.
 
-### 5. Descubrimiento musical
+### 5. Biblioteca personal
+
+Ruta: `/personal-library`
+
+Permite:
+
+- cargar todas tus `Liked Songs`
+- cargar albumes guardados
+- cargar artistas seguidos
+- cambiar entre secciones desde la misma vista
+- filtrar por texto segun la seccion activa
+- reutilizar cache si Spotify no esta disponible
+- exportar el subconjunto visible a TXT
+
+La exportacion sigue el mismo formato simple de la app:
+
+```txt
+1. Nights - Frank Ocean
+2. Jigsaw Falling Into Place - Radiohead
+```
+
+### 6. Descubrimiento musical
 
 Ruta: `/recommendations`
 
@@ -142,7 +164,7 @@ Permite buscar un artista base y obtener:
 
 La idea es explorar musica nueva a partir de una referencia conocida.
 
-### 6. Prompt generator
+### 7. Prompt generator
 
 Ruta: `/prompt-generator`
 
@@ -160,7 +182,7 @@ Se pueden ajustar campos como:
 
 La app no integra la IA; solo produce el prompt final.
 
-### 7. Dashboard musical
+### 8. Dashboard musical
 
 Rutas:
 

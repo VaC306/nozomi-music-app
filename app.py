@@ -19,6 +19,7 @@ from services.dashboard_report import DashboardReportBuilder
 from services.discord_monitoring import DiscordMonitoringService
 from services.playlist_enhancer import PlaylistEnhancer
 from services.playlist_manager import PlaylistImportError, PlaylistManager
+from services.personal_library_service import PersonalLibraryService
 from services.prompt_generator import PromptGenerator, PromptGeneratorError
 from services.recommender import Recommender
 from services.spotify_client import SpotifyAuthError, SpotifyClient, SpotifyClientError, SpotifyRateLimitError
@@ -118,6 +119,8 @@ def create_app() -> Flask:
         "playlist-modify-private",
         "playlist-read-private",
         "playlist-read-collaborative",
+        "user-library-read",
+        "user-follow-read",
         "user-top-read",
         "user-read-recently-played",
         "user-read-private",
@@ -526,6 +529,12 @@ def create_app() -> Flask:
                 "url": url_for("export_playlist"),
             },
             {
+                "title": "Biblioteca personal",
+                "description": "Consulta tus canciones guardadas, filtralas y exportalas a TXT desde una sola vista.",
+                "status": "Activo",
+                "url": url_for("personal_library"),
+            },
+            {
                 "title": "Mejorador de playlists",
                 "description": "Analiza artistas, generos y popularidad para sugerir que anadir, quitar y reordenar.",
                 "status": "Activo",
@@ -569,8 +578,8 @@ def create_app() -> Flask:
         return render_template(
             "index.html",
             features=features,
-            signed_in_feature_cards=[features[1], features[2], features[3]],
-            public_feature_cards=[features[0], features[5]],
+            signed_in_feature_cards=[features[1], features[2], features[3], features[4]],
+            public_feature_cards=[features[0], features[6]],
             primary_url=primary_url,
             primary_label=primary_label,
             secondary_url=secondary_url,
@@ -818,6 +827,80 @@ def create_app() -> Flask:
             flash("No se encontro el archivo exportado solicitado.", "danger")
             return redirect(url_for("export_playlist"))
         return send_file(file_path, as_attachment=True, download_name=file_path.name)
+
+    @app.route("/personal-library", methods=["GET", "POST"])
+    @login_required
+    def personal_library() -> Any:
+        try:
+            spotify_client = ensure_spotify_session()
+            ensure_required_spotify_scopes(["user-library-read", "user-follow-read"], "tu biblioteca personal")
+        except SpotifyAuthError as exc:
+            flash(str(exc), "warning")
+            return redirect(url_for("login"))
+
+        library_service = PersonalLibraryService(
+            Path(app.config["EXPORT_FOLDER"]),
+            user_id=str(session.get("spotify_user", {}).get("id", "")),
+        )
+        selected_tab = PersonalLibraryService.normalize_tab(request.values.get("tab", "tracks"))
+        cache_mode = get_playlist_cache_mode()
+        refresh_cache = request.method == "GET" and request.args.get("refresh_cache", "").strip() == "1"
+        protection_state = build_spotify_protection_state()
+        use_cache_only = cache_mode == "cache_only" or protection_state["cache_only_active"]
+        search_query = request.form.get("item_query", "") if request.method == "POST" else request.args.get("q", "")
+
+        if refresh_cache and protection_state["cache_only_active"]:
+            flash(protection_state["message"], "warning")
+            refresh_cache = False
+        if refresh_cache:
+            library_service.clear_cache(selected_tab)
+
+        try:
+            all_items = library_service.list_items(
+                tab=selected_tab,
+                spotify_client=spotify_client,
+                access_token=session["spotify_access_token"],
+                prefer_cached=use_cache_only and not refresh_cache,
+                allow_stale=use_cache_only,
+                cache_only=use_cache_only,
+                force_refresh=refresh_cache,
+            )
+        except (PlaylistImportError, SpotifyClientError) as exc:
+            all_items = library_service.get_cached_items(selected_tab)
+            flash(str(exc), "danger")
+            if all_items:
+                flash("Mostramos una copia en cache de tu biblioteca para que puedas seguir trabajando.", "warning")
+
+        items = library_service.filter_items(all_items, search_query)
+        summary = library_service.build_summary(selected_tab, all_items)
+        filtered_summary = library_service.build_summary(selected_tab, items)
+        tab_copy = library_service.get_tab_copy(selected_tab)
+        result = None
+
+        if request.method == "POST":
+            try:
+                result = library_service.export_items_to_txt(selected_tab, items)
+                flash("Biblioteca exportada correctamente a TXT.", "success")
+            except PlaylistImportError as exc:
+                flash(str(exc), "danger")
+
+        return render_template(
+            "personal_library.html",
+            items=items,
+            summary=summary,
+            filtered_summary=filtered_summary,
+            search_query=search_query,
+            result=result,
+            cache_mode=cache_mode,
+            protection_state=protection_state,
+            selected_tab=selected_tab,
+            tab_copy=tab_copy,
+            library_tabs=[
+                {"id": "tracks", "label": "Canciones"},
+                {"id": "albums", "label": "Albumes"},
+                {"id": "artists", "label": "Artistas"},
+            ],
+        )
 
     @app.route("/recommendations")
     @login_required

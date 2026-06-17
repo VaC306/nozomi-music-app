@@ -30,6 +30,7 @@
               <li class="nav-item"><a class="nav-link {% if request.endpoint == 'dashboard' %}active-link{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a></li>
               <li class="nav-item"><a class="nav-link {% if request.endpoint == 'create_playlist' %}active-link{% endif %}" href="{{ url_for('create_playlist') }}">Crear</a></li>
               <li class="nav-item"><a class="nav-link {% if request.endpoint == 'export_playlist' %}active-link{% endif %}" href="{{ url_for('export_playlist') }}">Exportar</a></li>
+              <li class="nav-item"><a class="nav-link {% if request.endpoint == 'personal_library' %}active-link{% endif %}" href="{{ url_for('personal_library') }}">Biblioteca</a></li>
               <li class="nav-item"><a class="nav-link {% if request.endpoint == 'playlist_enhancer' %}active-link{% endif %}" href="{{ url_for('playlist_enhancer') }}">Mejorar</a></li>
               <li class="nav-item"><a class="nav-link {% if request.endpoint == 'recommendations' %}active-link{% endif %}" href="{{ url_for('recommendations') }}">Recomendar</a></li>
             {% endif %}

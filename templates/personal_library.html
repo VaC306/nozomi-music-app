@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}Biblioteca Personal · Nozomi Music{% endblock %}
+
+{% block content %}
+<section class="content-panel mb-4">
+  <div class="row g-4 align-items-start">
+    <div class="col-lg-7">
+      <span class="eyebrow">Biblioteca personal</span>
+      <h1 class="section-title mt-3">Liked Songs, albumes guardados y artistas seguidos en una sola vista</h1>
+      <p class="panel-copy mt-3 mb-0">
+        {{ tab_copy.subtitle }} Puedes cambiar de seccion, filtrar por texto y exportar lo visible a TXT sin perder el apoyo de la cache.
+      </p>
+    </div>
+    <div class="col-lg-5">
+      <div class="info-note h-100">
+        <strong>Incluye</strong>
+        <ul class="phase-list mb-0 mt-3">
+          <li>Liked Songs completas</li>
+          <li>Albumes guardados</li>
+          <li>Artistas seguidos</li>
+          <li>Exportacion a TXT por seccion</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if protection_state.cache_only_active %}
+<section class="content-panel mb-4">
+  <span class="eyebrow">Proteccion Spotify</span>
+  <p class="panel-copy mt-3 mb-2">{{ protection_state.message }}</p>
+  <p class="micro-note mb-0">Tiempo restante: {{ protection_state.remaining_seconds }} segundos.</p>
+</section>
+{% endif %}
+
+<section class="row g-4 align-items-start">
+  <div class="col-xl-7">
+    <div class="content-panel h-100 form-panel">
+      <div class="section-heading mb-4">
+        <span class="eyebrow">Seccion activa</span>
+        <h2 class="section-title">{{ tab_copy.title }}</h2>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 align-items-center mb-4">
+        {% for tab in library_tabs %}
+          <a href="{{ url_for('personal_library', tab=tab.id) }}" class="btn {% if selected_tab == tab.id %}btn-spotify{% else %}btn-outline-light{% endif %} btn-sm">{{ tab.label }}</a>
+        {% endfor %}
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 align-items-center mb-4">
+        <span class="mini-label">Modo actual</span>
+        <span class="genre-chip">{{ 'Solo cache' if cache_mode == 'cache_only' or protection_state.cache_only_active else 'Normal' }}</span>
+        {% if protection_state.cache_only_active %}
+          <span class="btn btn-outline-light btn-sm disabled" aria-disabled="true">Refresco bloqueado</span>
+        {% else %}
+          <a href="{{ url_for('personal_library', tab=selected_tab, refresh_cache=1) }}" class="btn btn-outline-light btn-sm">Forzar refresco de cache</a>
+        {% endif %}
+      </div>
+
+      <form method="post" class="playlist-form">
+        <input type="hidden" name="tab" value="{{ selected_tab }}">
+        <div class="mb-4">
+          <label for="item_query" class="form-label">{{ tab_copy.search_label }}</label>
+          <input
+            type="text"
+            class="form-control form-control-lg nozomi-input"
+            id="item_query"
+            name="item_query"
+            placeholder="{{ tab_copy.search_placeholder }}"
+            value="{{ search_query }}"
+          >
+          <div class="form-hint mt-2">{{ tab_copy.search_hint }}</div>
+        </div>
+
+        <div class="result-grid mb-4">
+          <div class="result-stat">
+            <strong>{{ filtered_summary.primary_count }}</strong>
+            <span>{{ filtered_summary.primary_label }} visibles</span>
+          </div>
+          <div class="result-stat">
+            <strong>{{ summary.primary_count }}</strong>
+            <span>{{ summary.primary_label }} totales</span>
+          </div>
+          <div class="result-stat">
+            <strong>{{ summary.secondary_count }}</strong>
+            <span>{{ summary.secondary_label }}</span>
+          </div>
+          <div class="result-stat">
+            <strong>{{ summary.tertiary_count }}</strong>
+            <span>{{ summary.tertiary_label }}</span>
+          </div>
+        </div>
+
+        <div class="d-flex flex-wrap gap-3">
+          <button type="submit" class="btn btn-spotify btn-lg">Exportar seccion a TXT</button>
+          <a href="{{ url_for('personal_library', tab=selected_tab) }}" class="btn btn-outline-light btn-lg">Limpiar filtro</a>
+        </div>
+
+        <div class="form-hint mt-3">
+          {% if cache_mode == 'cache_only' or protection_state.cache_only_active %}
+            Solo cache: no haremos llamadas nuevas a Spotify desde esta pantalla. Puedes cambiarlo en Perfil.
+          {% else %}
+            Normal: usaremos cache y solo llamaremos a Spotify cuando haga falta. Puedes cambiarlo en Perfil.
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-xl-5">
+    <div class="content-panel h-100 steps-panel">
+      <span class="eyebrow">Resumen</span>
+      <div class="process-step mt-4">
+        <span>01</span>
+        <div>
+          <strong>Duracion o volumen</strong>
+          <p class="mb-0">{{ summary.duration_label if summary.duration_label != '-' else 'Seccion lista para navegar y exportar' }}</p>
+        </div>
+      </div>
+      <div class="process-step">
+        <span>02</span>
+        <div>
+          <strong>Ultima fecha registrada</strong>
+          <p class="mb-0">{{ summary.latest_added_at or 'No aplica en esta seccion' }}</p>
+        </div>
+      </div>
+      <div class="process-step mb-0">
+        <span>03</span>
+        <div>
+          <strong>Exportacion</strong>
+          <p class="mb-0">Generamos un TXT con el subconjunto visible de {{ selected_tab }}.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="content-panel mt-4">
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Preview</span>
+      <h2 class="section-title mt-2 mb-0">{{ tab_copy.preview_title }}</h2>
+    </div>
+    <div class="result-source-pill">
+      <strong>{{ filtered_summary.primary_count }}</strong>
+      <span>{{ filtered_summary.primary_label }} tras el filtro</span>
+    </div>
+  </div>
+
+  {% if items %}
+    <div class="playlist-picker">
+      {% for item in items[:80] %}
+        <div class="playlist-option">
+          <div class="playlist-option-body">
+            <strong>{{ loop.index }}. {{ item.title }}</strong>
+            <small>
+              {% if selected_tab == 'tracks' %}
+                {{ item.artist_names }}{% if item.album %} · {{ item.album }}{% endif %}{% if item.added_at %} · guardada: {{ item.added_at }}{% endif %}
+              {% elif selected_tab == 'albums' %}
+                {{ item.artist_names }} · {{ item.track_total }} tracks{% if item.release_date %} · publicado: {{ item.release_date }}{% endif %}{% if item.added_at %} · guardado: {{ item.added_at }}{% endif %}
+              {% else %}
+                {% if item.genres %}{{ item.genres|join(', ') }} · {% endif %}{{ item.followers }} followers · popularidad {{ item.popularity }}
+              {% endif %}
+            </small>
+            {% if item.spotify_url %}
+              <a href="{{ item.spotify_url }}" target="_blank" rel="noopener noreferrer" class="mini-label mt-2 d-inline-block">Abrir en Spotify</a>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    {% if filtered_summary.primary_count > 80 %}
+      <div class="form-hint mt-3">Mostramos los primeros 80 elementos visibles para mantener la pagina ligera. La exportacion incluye todo el filtro.</div>
+    {% endif %}
+  {% else %}
+    <div class="empty-state compact-empty">
+      <h2>Sin elementos visibles</h2>
+      <p class="mb-0">No encontramos resultados que coincidan con el filtro actual.</p>
+    </div>
+  {% endif %}
+</section>
+
+{% if result %}
+<section class="content-panel result-panel mt-4">
+  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
+    <div>
+      <span class="eyebrow">Exportacion completada</span>
+      <h2 class="section-title mt-2 mb-0">Biblioteca personal · {{ selected_tab }}</h2>
+    </div>
+    <div class="d-flex flex-wrap gap-3">
+      <a href="{{ url_for('download_export', filename=result.file_name) }}" class="btn btn-spotify">Descargar TXT</a>
+    </div>
+  </div>
+
+  <div class="result-grid mb-4">
+    <div class="result-stat">
+      <strong>{{ result.item_count }}</strong>
+      <span>elementos exportados</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ selected_tab }}</strong>
+      <span>seccion</span>
+    </div>
+    <div class="result-stat">
+      <strong>{{ result.file_name }}</strong>
+      <span>archivo generado</span>
+    </div>
+    <div class="result-stat">
+      <strong>TXT</strong>
+      <span>formato simple</span>
+    </div>
+  </div>
+
+  <div class="result-box">
+    <span class="mini-label">Ruta local</span>
+    <p class="mb-0 mt-3 monospace-meta">{{ result.file_path }}</p>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

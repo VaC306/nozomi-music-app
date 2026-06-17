@@ -146,6 +146,54 @@ class SpotifyClient:
         )
         return data.get("items", [])
 
+    def get_saved_tracks(self, access_token: str) -> list[dict[str, Any]]:
+        tracks: list[dict[str, Any]] = []
+        endpoint = "/me/tracks"
+        params: dict[str, Any] | None = {"limit": 50}
+
+        while endpoint:
+            data = self.request(access_token, "GET", endpoint, params=params)
+            tracks.extend(data.get("items", []))
+            next_url = data.get("next")
+            if not next_url:
+                break
+            endpoint = next_url.replace(self.API_BASE_URL, "")
+            params = None
+        return tracks
+
+    def get_saved_albums(self, access_token: str) -> list[dict[str, Any]]:
+        albums: list[dict[str, Any]] = []
+        endpoint = "/me/albums"
+        params: dict[str, Any] | None = {"limit": 50}
+
+        while endpoint:
+            data = self.request(access_token, "GET", endpoint, params=params)
+            albums.extend(data.get("items", []))
+            next_url = data.get("next")
+            if not next_url:
+                break
+            endpoint = next_url.replace(self.API_BASE_URL, "")
+            params = None
+        return albums
+
+    def get_followed_artists(self, access_token: str) -> list[dict[str, Any]]:
+        artists: list[dict[str, Any]] = []
+        after: str | None = None
+
+        while True:
+            params: dict[str, Any] = {"type": "artist", "limit": 50}
+            if after:
+                params["after"] = after
+            data = self.request(access_token, "GET", "/me/following", params=params)
+            artist_block = data.get("artists") or {}
+            items = artist_block.get("items", [])
+            artists.extend(items)
+            cursors = artist_block.get("cursors") or {}
+            after = cursors.get("after")
+            if not after or not items:
+                break
+        return artists
+
     def get_artist(self, access_token: str, artist_id: str) -> dict[str, Any]:
         return self.request(access_token, "GET", f"/artists/{artist_id}")
 
