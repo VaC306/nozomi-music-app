@@ -13,6 +13,10 @@ import requests
 class SpotifyClientError(Exception):
     """Raised when the Spotify API returns an error."""
 
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class SpotifyAuthError(SpotifyClientError):
     """Raised when Spotify OAuth fails."""
@@ -21,8 +25,13 @@ class SpotifyAuthError(SpotifyClientError):
 class SpotifyRateLimitError(SpotifyClientError):
     """Raised when Spotify rate limiting is active."""
 
-    def __init__(self, message: str, retry_after_seconds: int | None = None) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str,
+        retry_after_seconds: int | None = None,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code)
         self.retry_after_seconds = retry_after_seconds
 
 
@@ -382,7 +391,10 @@ class SpotifyClient:
             message = f"Spotify devolvio un error HTTP {response.status_code}."
 
         if response.status_code == 401:
-            raise SpotifyAuthError("La sesion de Spotify ya no es valida. Vuelve a iniciar sesion.")
+            raise SpotifyAuthError(
+                "La sesion de Spotify ya no es valida. Vuelve a iniciar sesion.",
+                status_code=response.status_code,
+            )
         if response.status_code == 429:
             retry_after = cls._parse_retry_after(response.headers.get("Retry-After", ""))
             cls._activate_rate_limit(retry_after)
@@ -394,10 +406,14 @@ class SpotifyClient:
             raise SpotifyRateLimitError(
                 f"Spotify esta recibiendo demasiadas solicitudes ahora mismo y pausamos las llamadas para proteger la app.{detail}",
                 retry_after_seconds=retry_after,
+                status_code=response.status_code,
             )
         if response.status_code >= 500:
-            raise SpotifyClientError("Spotify no esta respondiendo correctamente en este momento.")
-        raise SpotifyClientError(message)
+            raise SpotifyClientError(
+                "Spotify no esta respondiendo correctamente en este momento.",
+                status_code=response.status_code,
+            )
+        raise SpotifyClientError(message, status_code=response.status_code)
 
     @classmethod
     def _activate_rate_limit(cls, retry_after_seconds: int | None) -> None:
@@ -435,4 +451,4 @@ class SpotifyClient:
             message = data.get("error_description") or data.get("error") or message
         except ValueError:
             pass
-        raise SpotifyAuthError(message)
+        raise SpotifyAuthError(message, status_code=response.status_code)

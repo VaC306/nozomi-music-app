@@ -155,7 +155,7 @@ class ArtistCacheService:
         try:
             return self.spotify_client.get_artists(access_token, artist_ids)
         except SpotifyClientError as exc:
-            if str(exc).strip().lower() != "forbidden":
+            if exc.status_code != 403 and str(exc).strip().lower() != "forbidden":
                 raise
         fallback_token = self._get_client_credentials_access_token()
         return self.spotify_client.get_artists(fallback_token, artist_ids)
