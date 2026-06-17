@@ -155,9 +155,19 @@ class ArtistCacheService:
         try:
             return self.spotify_client.get_artists(access_token, artist_ids)
         except SpotifyClientError as exc:
+            logger.warning(
+                "Artist batch lookup failed with user token | artist_ids=%s status_code=%s error=%s",
+                artist_ids,
+                exc.status_code,
+                str(exc).strip(),
+            )
             if exc.status_code != 403 and str(exc).strip().lower() != "forbidden":
                 raise
         fallback_token = self._get_client_credentials_access_token()
+        logger.warning(
+            "Retrying artist batch lookup with client credentials | artist_ids=%s",
+            artist_ids,
+        )
         return self.spotify_client.get_artists(fallback_token, artist_ids)
 
     def _get_client_credentials_access_token(self) -> str:

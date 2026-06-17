@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import threading
 import time
@@ -8,6 +9,9 @@ from typing import Any
 from urllib.parse import quote
 
 import requests
+
+
+logger = logging.getLogger(__name__)
 
 
 class SpotifyClientError(Exception):
@@ -380,15 +384,31 @@ class SpotifyClient:
     @classmethod
     def _raise_api_error(cls, response: requests.Response) -> None:
         message = "Error al comunicarse con Spotify."
+        response_payload: Any = None
         try:
             data = response.json()
+            response_payload = data
             error = data.get("error", {})
             if isinstance(error, dict):
                 message = error.get("message", message)
             elif isinstance(error, str):
                 message = error
         except ValueError:
+            response_payload = response.text
             message = f"Spotify devolvio un error HTTP {response.status_code}."
+
+        logger.error(
+            "Spotify API error | status_code=%s url=%s retry_after=%s headers=%s body=%s",
+            response.status_code,
+            response.url,
+            response.headers.get("Retry-After", ""),
+            {
+                "Retry-After": response.headers.get("Retry-After", ""),
+                "Content-Type": response.headers.get("Content-Type", ""),
+                "X-Request-Id": response.headers.get("X-Request-Id", ""),
+            },
+            response_payload,
+        )
 
         if response.status_code == 401:
             raise SpotifyAuthError(
@@ -446,9 +466,23 @@ class SpotifyClient:
     @staticmethod
     def _raise_auth_error(response: requests.Response) -> None:
         message = "No se pudo autenticar con Spotify."
+        response_payload: Any = None
         try:
             data = response.json()
+            response_payload = data
             message = data.get("error_description") or data.get("error") or message
         except ValueError:
-            pass
+            response_payload = response.text
+        logger.error(
+            "Spotify auth error | status_code=%s url=%s retry_after=%s headers=%s body=%s",
+            response.status_code,
+            response.url,
+            response.headers.get("Retry-After", ""),
+            {
+                "Retry-After": response.headers.get("Retry-After", ""),
+                "Content-Type": response.headers.get("Content-Type", ""),
+                "X-Request-Id": response.headers.get("X-Request-Id", ""),
+            },
+            response_payload,
+        )
         raise SpotifyAuthError(message, status_code=response.status_code)
