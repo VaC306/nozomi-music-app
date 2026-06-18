@@ -66,6 +66,36 @@
   </div>
 
   <div class="col-xl-5">
+    <div class="content-panel request-side-panel h-100 mb-4">
+      <span class="eyebrow">Cache Spotify</span>
+      <h2 class="section-title mt-2">Modo global</h2>
+      <p class="panel-copy mt-3">Elige si `Biblioteca`, `Exportar` y `Mejorar` deben trabajar solo con cache o si pueden consultar Spotify cuando no haya copia local.</p>
+
+      <form method="post" class="playlist-form mt-4">
+        <input type="hidden" name="form_action" value="cache_preferences">
+
+        <div class="playlist-picker mb-4">
+          <label class="playlist-option">
+            <input type="radio" name="cache_mode" value="cache_only" {% if cache_mode == 'cache_only' %}checked{% endif %}>
+            <span class="playlist-option-body">
+              <strong>Solo cache</strong>
+              <small>No hace llamadas nuevas a Spotify desde exportar ni mejorar.</small>
+            </span>
+          </label>
+
+          <label class="playlist-option">
+            <input type="radio" name="cache_mode" value="normal" {% if cache_mode == 'normal' %}checked{% endif %}>
+            <span class="playlist-option-body">
+              <strong>Normal</strong>
+              <small>Usa cache primero y solo consulta Spotify cuando falten datos.</small>
+            </span>
+          </label>
+        </div>
+
+        <button type="submit" class="btn btn-spotify">Guardar preferencia</button>
+      </form>
+    </div>
+
     <div class="content-panel request-side-panel h-100">
       <span class="eyebrow">Que se envia</span>
       <div class="request-preview mt-3">
@@ -137,4 +167,3 @@
   <a href="{{ url_for('login') }}" class="btn btn-outline-light">Ir a login Spotify</a>
 </section>
 {% endblock %}
-
