@@ -296,7 +296,13 @@ class PlaylistManager:
         owner_name = owner.get("display_name") or owner.get("id", "Spotify")
         track_total = tracks.get("total")
         if not isinstance(track_total, int):
-            track_total = 0
+            fallback_total = playlist.get("track_total")
+            if isinstance(fallback_total, int):
+                track_total = fallback_total
+            elif isinstance(fallback_total, str) and fallback_total.strip().isdigit():
+                track_total = int(fallback_total.strip())
+            else:
+                track_total = 0
         return {
             **playlist,
             "owner": owner,
