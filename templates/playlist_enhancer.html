@@ -48,11 +48,14 @@
         {% if protection_state.cache_only_active %}
           <span class="btn btn-outline-light btn-sm disabled" aria-disabled="true">Refresco bloqueado</span>
         {% else %}
-          <a href="{{ url_for('playlist_enhancer', refresh_cache=1) }}" class="btn btn-outline-light btn-sm">Forzar refresco de cache</a>
+          <a href="{{ url_for('playlist_enhancer', refresh_cache=1) }}" class="btn btn-outline-light btn-sm">Forzar refresco completo</a>
         {% endif %}
       </div>
 
       <form method="post" class="playlist-form">
+        {% if request.args.get('refresh_cache') == '1' %}
+          <input type="hidden" name="refresh_cache" value="1">
+        {% endif %}
         <div class="mb-4">
           <label for="playlist_query" class="form-label">Buscar por nombre</label>
           <input
@@ -104,7 +107,7 @@
           {% if cache_mode == 'cache_only' or protection_state.cache_only_active %}
             Solo cache: no haremos llamadas nuevas a Spotify desde esta pantalla. Puedes cambiarlo en Perfil.
           {% else %}
-            Normal: usaremos cache y solo llamaremos a Spotify cuando haga falta. Puedes cambiarlo en Perfil.
+            Normal: usaremos cache y, si fuerzas refresco, recalcularemos tambien tracks y reporte. Puedes cambiarlo en Perfil.
           {% endif %}
         </div>
       </form>
@@ -159,6 +162,43 @@
     <div class="result-stat"><strong>{{ report.stats.unique_artist_count }}</strong><span>artistas</span></div>
     <div class="result-stat"><strong>{{ report.stats.duration_label }}</strong><span>duracion</span></div>
   </div>
+
+  {% if report.score %}
+    <article class="result-box enhancer-card mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center">
+        <div>
+          <span class="mini-label">Scoring curatorial</span>
+          <h3 class="section-title mt-2 mb-1">{{ report.score.overall }}/100 · {{ report.score.label }}</h3>
+          <p class="micro-note mb-0">{{ report.score.summary }} La energia se estima de forma heuristica con popularidad, duracion y contexto de genero.</p>
+        </div>
+        <div class="sample-chips">
+          {% for item in report.score.highlights %}
+            <span class="genre-chip">{{ item }}</span>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="enhancer-meta-grid mt-4">
+        {% for key, component in report.score.components.items() %}
+          <div>
+            <strong>{{ component.label }} · {{ component.value }}</strong>
+            <p class="micro-note mt-2 mb-0">{{ component.reason }}</p>
+          </div>
+        {% endfor %}
+      </div>
+
+      {% if report.score.warnings %}
+        <div class="info-note mt-4">
+          <strong>Ajustes sugeridos</strong>
+          <ul class="phase-list mb-0 mt-3">
+            {% for warning in report.score.warnings %}
+              <li>{{ warning }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+    </article>
+  {% endif %}
 
   <div class="enhancer-grid">
     <article class="result-box enhancer-card">

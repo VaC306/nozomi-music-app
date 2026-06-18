@@ -77,6 +77,18 @@ class DashboardTopSnapshot(db.Model):
     )
 
 
+class DashboardTopHistorySnapshot(db.Model):
+    __tablename__ = "dashboard_top_history_snapshot"
+
+    id = db.Column(db.Integer, primary_key=True)
+    spotify_user_id = db.Column(db.String(120), nullable=False, index=True)
+    snapshot_type = db.Column(db.String(20), nullable=False, index=True)
+    time_range = db.Column(db.String(20), nullable=False, index=True)
+    payload_json = db.Column(db.Text, nullable=False, default="[]")
+    fetched_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class SpotifyMonitoringEvent(db.Model):
     __tablename__ = "spotify_monitoring_event"
 

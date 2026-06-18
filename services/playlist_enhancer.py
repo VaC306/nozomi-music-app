@@ -27,6 +27,7 @@ class PlaylistEnhancer:
         access_token: str,
         playlist: dict[str, Any],
         cache_only: bool = False,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         playlist_id = str(playlist.get("id", "")).strip()
         if not playlist_id:
@@ -34,10 +35,17 @@ class PlaylistEnhancer:
 
         try:
             return self.cache_service.get_or_set(
-                cache_key=f"playlist-enhancer-report:v1:{playlist_id}",
+                cache_key=f"playlist-enhancer-report:v2:{playlist_id}",
                 ttl_seconds=self.REPORT_TTL_SECONDS,
                 source_endpoint="playlist_enhancer_report",
-                fetcher=lambda: self._build_playlist_report_uncached(access_token, playlist, playlist_id, cache_only),
+                fetcher=lambda: self._build_playlist_report_uncached(
+                    access_token,
+                    playlist,
+                    playlist_id,
+                    cache_only,
+                    force_refresh,
+                ),
+                force_refresh=force_refresh,
             )
         finally:
             self.artist_cache_service.log_metrics("playlist-enhancer")
@@ -48,9 +56,10 @@ class PlaylistEnhancer:
         playlist: dict[str, Any],
         playlist_id: str,
         cache_only: bool,
+        force_refresh: bool,
     ) -> dict[str, Any]:
         cache_key = f"playlist-tracks:v1:{playlist_id}"
-        playlist_tracks = self.cache_service.get(cache_key, allow_stale=True)
+        playlist_tracks = None if force_refresh else self.cache_service.get(cache_key, allow_stale=True)
         if playlist_tracks is None and cache_only:
             raise SpotifyClientError(
                 "No hay una copia en cache de esa playlist todavia. Desactiva 'solo cache' o fuerza un refresco cuando Spotify lo permita."
@@ -61,6 +70,7 @@ class PlaylistEnhancer:
                 ttl_seconds=self.PLAYLIST_TRACKS_TTL_SECONDS,
                 source_endpoint="get_playlist_tracks",
                 fetcher=lambda: self.spotify_client.get_playlist_tracks(access_token, playlist_id),
+                force_refresh=force_refresh,
             )
         tracks = self._normalize_playlist_tracks(access_token, playlist_tracks)
         if not tracks:
@@ -74,6 +84,14 @@ class PlaylistEnhancer:
 
         average_popularity = round(mean(track["popularity"] for track in tracks)) if tracks else 0
         duplicate_groups = self._build_duplicate_groups(tracks)
+        stats = self._build_stats(tracks, artist_counter, genre_counter, average_popularity, duplicate_groups)
+        score = self._build_playlist_score(
+            tracks,
+            artist_counter,
+            genre_counter,
+            average_popularity,
+            duplicate_groups,
+        )
 
         return {
             "playlist": {
@@ -83,7 +101,8 @@ class PlaylistEnhancer:
                 "track_total": len(tracks),
                 "spotify_url": playlist.get("external_urls", {}).get("spotify", ""),
             },
-            "stats": self._build_stats(tracks, artist_counter, genre_counter, average_popularity, duplicate_groups),
+            "stats": stats,
+            "score": score,
             "recommendations_to_add": self._build_add_recommendations(
                 access_token,
                 tracks,
@@ -125,6 +144,7 @@ class PlaylistEnhancer:
             primary_artist = artists[0].get("name", "") if artists else ""
             primary_artist_id = artists[0].get("id", "") if artists else ""
             genres = self._build_track_genres(artists, artists_lookup)
+            estimated_energy = self._estimate_track_energy(track, genres)
             normalized_tracks.append(
                 {
                     "position": index,
@@ -142,6 +162,7 @@ class PlaylistEnhancer:
                     "spotify_url": track.get("external_urls", {}).get("spotify", ""),
                     "genres": genres,
                     "primary_genre": genres[0] if genres else "Sin genero",
+                    "estimated_energy": estimated_energy,
                     "search_key": normalize_text(
                         f"{track.get('name', '')} {' '.join(artist.get('name', '') for artist in artists)}"
                     ),
@@ -186,6 +207,161 @@ class PlaylistEnhancer:
             "top_artists": top_artists,
             "top_genres": top_genres,
         }
+
+    def _build_playlist_score(
+        self,
+        tracks: list[dict[str, Any]],
+        artist_counter: Counter[str],
+        genre_counter: Counter[str],
+        average_popularity: int,
+        duplicate_groups: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        weights = {
+            "coherence": 0.30,
+            "variety": 0.20,
+            "energy": 0.20,
+            "repetition": 0.15,
+            "popularity": 0.15,
+        }
+
+        coherence_value = self._score_coherence(tracks, artist_counter, genre_counter)
+        variety_value = self._score_variety(tracks, artist_counter, genre_counter)
+        energy_value = self._score_energy(tracks)
+        repetition_value = self._score_repetition(tracks, artist_counter, duplicate_groups)
+        popularity_value = self._score_popularity(tracks, average_popularity)
+
+        overall = round(
+            coherence_value * weights["coherence"]
+            + variety_value * weights["variety"]
+            + energy_value * weights["energy"]
+            + repetition_value * weights["repetition"]
+            + popularity_value * weights["popularity"]
+        )
+
+        components = {
+            "coherence": {
+                "label": "Coherencia",
+                "value": coherence_value,
+                "weight": weights["coherence"],
+                "reason": self._build_coherence_reason(coherence_value, tracks, genre_counter),
+            },
+            "variety": {
+                "label": "Variedad",
+                "value": variety_value,
+                "weight": weights["variety"],
+                "reason": self._build_variety_reason(variety_value, tracks, artist_counter, genre_counter),
+            },
+            "energy": {
+                "label": "Energia",
+                "value": energy_value,
+                "weight": weights["energy"],
+                "reason": self._build_energy_reason(energy_value, tracks),
+            },
+            "repetition": {
+                "label": "Repeticion",
+                "value": repetition_value,
+                "weight": weights["repetition"],
+                "reason": self._build_repetition_reason(repetition_value, tracks, artist_counter, duplicate_groups),
+            },
+            "popularity": {
+                "label": "Popularidad",
+                "value": popularity_value,
+                "weight": weights["popularity"],
+                "reason": self._build_popularity_reason(popularity_value, average_popularity, tracks),
+            },
+        }
+
+        return {
+            "overall": overall,
+            "label": self._build_score_label(overall),
+            "summary": self._build_score_summary(overall, components),
+            "components": components,
+            "highlights": self._build_score_highlights(components),
+            "warnings": self._build_score_warnings(components),
+        }
+
+    def _score_coherence(
+        self,
+        tracks: list[dict[str, Any]],
+        artist_counter: Counter[str],
+        genre_counter: Counter[str],
+    ) -> int:
+        if not tracks:
+            return 0
+
+        top_genre_total = sum(count for _genre, count in genre_counter.most_common(3))
+        total_genre_tags = sum(genre_counter.values()) or len(tracks)
+        genre_focus = min(top_genre_total / total_genre_tags, 1.0)
+
+        transition_scores = [
+            self._transition_score(previous, current, artist_counter, genre_counter)
+            for previous, current in zip(tracks, tracks[1:])
+        ]
+        average_transition = mean(transition_scores) if transition_scores else 20
+        normalized_transition = self._clamp((average_transition / 40) * 100)
+
+        dominant_artist_share = max(artist_counter.values(), default=0) / len(tracks)
+        artist_balance = 100 - self._clamp((dominant_artist_share - 0.35) * 180)
+
+        score = normalized_transition * 0.4 + genre_focus * 100 * 0.35 + artist_balance * 0.25
+        return self._clamp(score)
+
+    def _score_variety(
+        self,
+        tracks: list[dict[str, Any]],
+        artist_counter: Counter[str],
+        genre_counter: Counter[str],
+    ) -> int:
+        track_count = len(tracks)
+        if track_count == 0:
+            return 0
+
+        unique_artist_ratio = len(artist_counter) / track_count
+        unique_genre_ratio = len(genre_counter) / track_count if genre_counter else 0.15
+        artist_variety = self._score_ratio_in_band(unique_artist_ratio, 0.55, 0.9)
+        genre_variety = self._score_ratio_in_band(unique_genre_ratio, 0.12, 0.35)
+
+        dominant_artist_share = max(artist_counter.values(), default=0) / track_count
+        concentration_penalty = self._clamp(max(dominant_artist_share - 0.22, 0) * 120)
+
+        score = artist_variety * 0.5 + genre_variety * 0.35 + (100 - concentration_penalty) * 0.15
+        return self._clamp(score)
+
+    def _score_energy(self, tracks: list[dict[str, Any]]) -> int:
+        if not tracks:
+            return 0
+
+        energy_values = [track["estimated_energy"] for track in tracks]
+        average_energy = mean(energy_values)
+        smoothness_gaps = [abs(previous - current) for previous, current in zip(energy_values, energy_values[1:])]
+        average_gap = mean(smoothness_gaps) if smoothness_gaps else 8
+        smoothness_score = 100 - self._clamp(average_gap * 3)
+
+        score = average_energy * 0.55 + smoothness_score * 0.45
+        return self._clamp(score)
+
+    def _score_repetition(
+        self,
+        tracks: list[dict[str, Any]],
+        artist_counter: Counter[str],
+        duplicate_groups: list[dict[str, Any]],
+    ) -> int:
+        track_count = len(tracks) or 1
+        duplicate_penalty = sum(max(group["count"] - 1, 0) for group in duplicate_groups) * 18
+        dominant_artist_share = max(artist_counter.values(), default=0) / track_count
+        artist_penalty = self._clamp(max(dominant_artist_share - 0.28, 0) * 110)
+        repeated_album_penalty = self._build_album_concentration_penalty(tracks)
+        score = 100 - duplicate_penalty - artist_penalty - repeated_album_penalty
+        return self._clamp(score)
+
+    def _score_popularity(self, tracks: list[dict[str, Any]], average_popularity: int) -> int:
+        if not tracks:
+            return 0
+
+        gaps = [abs(track["popularity"] - average_popularity) for track in tracks]
+        consistency = 100 - self._clamp((mean(gaps) if gaps else 0) * 2)
+        score = average_popularity * 0.7 + consistency * 0.3
+        return self._clamp(score)
 
     def _build_add_recommendations(
         self,
@@ -387,6 +563,106 @@ class PlaylistEnhancer:
             "remaining_count": max(len(ordered) - len(preview), 0),
         }
 
+    def _build_coherence_reason(
+        self,
+        score: int,
+        tracks: list[dict[str, Any]],
+        genre_counter: Counter[str],
+    ) -> str:
+        dominant_genre, dominant_count = genre_counter.most_common(1)[0] if genre_counter else ("sin genero claro", 0)
+        share = round((dominant_count / max(len(tracks), 1)) * 100)
+        if score >= 80:
+            return f"Hay un nucleo claro y el genero dominante ({dominant_genre}) sostiene buena parte del recorrido ({share}%)."
+        if score >= 60:
+            return f"La playlist conserva una linea reconocible, aunque el bloque principal ({dominant_genre}) no manda en todo el recorrido."
+        return "El set cambia de foco con frecuencia y las transiciones pierden algo de continuidad."
+
+    def _build_variety_reason(
+        self,
+        score: int,
+        tracks: list[dict[str, Any]],
+        artist_counter: Counter[str],
+        genre_counter: Counter[str],
+    ) -> str:
+        unique_artists = len(artist_counter)
+        unique_genres = len(genre_counter)
+        if score >= 80:
+            return f"Respira bien: mezcla {unique_artists} artistas y {unique_genres} generos sin romper el perfil central."
+        if score >= 60:
+            return f"Hay variedad razonable ({unique_artists} artistas, {unique_genres} generos), pero todavia queda margen para abrir mas el abanico."
+        return "La seleccion se siente demasiado cerrada o demasiado dispersa para el numero de tracks actual."
+
+    def _build_energy_reason(self, score: int, tracks: list[dict[str, Any]]) -> str:
+        average_energy = round(mean(track["estimated_energy"] for track in tracks)) if tracks else 0
+        if score >= 80:
+            return f"La energia estimada se mantiene firme y bastante estable durante el recorrido (media {average_energy}/100)."
+        if score >= 60:
+            return f"La energia estimada es funcional, aunque hay algunos cambios de intensidad entre bloques (media {average_energy}/100)."
+        return "La intensidad sube y baja demasiado; conviene ordenar mejor o recortar outliers para que el viaje fluya."
+
+    def _build_repetition_reason(
+        self,
+        score: int,
+        tracks: list[dict[str, Any]],
+        artist_counter: Counter[str],
+        duplicate_groups: list[dict[str, Any]],
+    ) -> str:
+        duplicate_count = sum(max(group["count"] - 1, 0) for group in duplicate_groups)
+        dominant_artist, dominant_count = artist_counter.most_common(1)[0] if artist_counter else ("", 0)
+        if score >= 80:
+            return "Se detectan pocas repeticiones y la concentracion por artista sigue en una zona sana."
+        if duplicate_count:
+            return f"Hay {duplicate_count} duplicadas claras y {dominant_artist} aparece {dominant_count} veces, lo que comprime la escucha."
+        return "No hay demasiadas duplicadas exactas, pero algunos artistas o albumes se repiten mas de la cuenta."
+
+    def _build_popularity_reason(self, score: int, average_popularity: int, tracks: list[dict[str, Any]]) -> str:
+        if score >= 80:
+            return f"La popularidad media es alta ({average_popularity}) y el set mantiene bastante consistencia entre tracks."
+        if score >= 60:
+            return f"La popularidad media es solida ({average_popularity}) y acompana bien al perfil general de la playlist."
+        return f"La popularidad media ({average_popularity}) cae bastante o mezcla extremos que hacen menos uniforme la seleccion."
+
+    def _build_score_label(self, overall: int) -> str:
+        if overall >= 85:
+            return "Muy solida"
+        if overall >= 75:
+            return "Buena"
+        if overall >= 60:
+            return "Prometedora"
+        if overall >= 45:
+            return "Irregular"
+        return "Dispersa"
+
+    def _build_score_summary(self, overall: int, components: dict[str, dict[str, Any]]) -> str:
+        strongest = max(components.values(), key=lambda item: item["value"])
+        weakest = min(components.values(), key=lambda item: item["value"])
+        if overall >= 75:
+            return f"La playlist funciona bien: destaca en {strongest['label'].lower()} y solo necesita afinar {weakest['label'].lower()}."
+        if overall >= 60:
+            return f"Tiene una base util, pero {weakest['label'].lower()} todavia limita la experiencia global."
+        return f"Ahora mismo pesa mas la debilidad en {weakest['label'].lower()} que las fortalezas del conjunto."
+
+    def _build_score_highlights(self, components: dict[str, dict[str, Any]]) -> list[str]:
+        highlights = [
+            f"{component['label']} fuerte" for component in components.values() if component["value"] >= 78
+        ]
+        return highlights[:3] or ["Base util para seguir curando la playlist"]
+
+    def _build_score_warnings(self, components: dict[str, dict[str, Any]]) -> list[str]:
+        warnings = [
+            f"{component['label']} necesita ajuste" for component in components.values() if component["value"] < 60
+        ]
+        return warnings[:3]
+
+    @staticmethod
+    def _build_album_concentration_penalty(tracks: list[dict[str, Any]]) -> int:
+        albums = [track["album"] for track in tracks if track["album"]]
+        if not albums:
+            return 0
+        album_counter = Counter(albums)
+        dominant_share = max(album_counter.values(), default=0) / max(len(tracks), 1)
+        return PlaylistEnhancer._clamp(max(dominant_share - 0.35, 0) * 70)
+
     @staticmethod
     def _build_duplicate_groups(tracks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
@@ -447,6 +723,41 @@ class PlaylistEnhancer:
         if popularity >= average_popularity:
             return "Aporta un pico de traccion sin desentonar demasiado con el resto."
         return "Funciona como variacion cercana para ensanchar la playlist sin romperla."
+
+    @staticmethod
+    def _estimate_track_energy(track: dict[str, Any], genres: list[str]) -> int:
+        popularity = int(track.get("popularity", 0) or 0)
+        duration_ms = int(track.get("duration_ms", 0) or 0)
+        duration_minutes = duration_ms / 60000 if duration_ms else 0
+        genre_text = " ".join(genres).lower()
+
+        score = popularity * 0.55
+        if 2.1 <= duration_minutes <= 4.4:
+            score += 18
+        elif duration_minutes > 0:
+            score += 10
+
+        energetic_terms = ("dance", "edm", "house", "techno", "electro", "hyperpop", "punk", "metal", "club", "trap")
+        mellow_terms = ("ambient", "acoustic", "sleep", "piano", "chill", "folk", "jazz")
+        if any(term in genre_text for term in energetic_terms):
+            score += 18
+        if any(term in genre_text for term in mellow_terms):
+            score -= 10
+        return PlaylistEnhancer._clamp(score)
+
+    @staticmethod
+    def _score_ratio_in_band(value: float, low: float, high: float) -> int:
+        if low <= value <= high:
+            return 100
+        if value < low:
+            distance = (low - value) / max(low, 0.01)
+        else:
+            distance = (value - high) / max(1 - high, 0.01)
+        return PlaylistEnhancer._clamp(100 - distance * 100)
+
+    @staticmethod
+    def _clamp(value: float, minimum: int = 0, maximum: int = 100) -> int:
+        return max(minimum, min(maximum, round(value)))
 
     @staticmethod
     def _transition_score(

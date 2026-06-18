@@ -38,19 +38,39 @@
   <div class="col-xl-7">
     <div class="content-panel h-100 form-panel">
       <div class="section-heading mb-4">
-        <span class="eyebrow">Seccion activa</span>
+        <span class="eyebrow">Secciones</span>
         <h2 class="section-title">{{ tab_copy.title }}</h2>
       </div>
 
       <div class="d-flex flex-wrap gap-2 align-items-center mb-4">
         {% for tab in library_tabs %}
-          <a href="{{ url_for('personal_library', tab=tab.id) }}" class="btn {% if selected_tab == tab.id %}btn-spotify{% else %}btn-outline-light{% endif %} btn-sm">{{ tab.label }}</a>
+          {% if tab.enabled %}
+            <a href="{{ url_for('personal_library', tab=tab.id) }}" class="btn {% if selected_tab == tab.id %}btn-spotify{% else %}btn-outline-light{% endif %} btn-sm">{{ tab.label }}</a>
+          {% else %}
+            <span class="btn btn-outline-light btn-sm disabled" aria-disabled="true">{{ tab.label }} · permiso</span>
+          {% endif %}
         {% endfor %}
       </div>
+
+      <div class="sample-chips mb-4">
+        {% for tab in library_tabs %}
+          <span class="genre-chip">{{ tab.label }} · {{ 'ok' if tab.enabled else 'permiso pendiente' }}</span>
+        {% endfor %}
+      </div>
+
+      {% if not selected_tab %}
+        <div class="info-note mb-0">
+          <strong>Carga por pestana</strong>
+          <p class="mb-0 mt-3">Nozomi no consulta toda tu biblioteca al entrar aqui. Solo cargamos la seccion que abras: canciones, albumes o artistas.</p>
+        </div>
+      {% else %}
 
       <div class="d-flex flex-wrap gap-2 align-items-center mb-4">
         <span class="mini-label">Modo actual</span>
         <span class="genre-chip">{{ 'Solo cache' if cache_mode == 'cache_only' or protection_state.cache_only_active else 'Normal' }}</span>
+        {% if cache_status %}
+          <span class="genre-chip">{{ 'Cache vencida' if cache_status.is_stale else 'Cache lista' if cache_status.has_cache else 'Sin cache' }}</span>
+        {% endif %}
         {% if protection_state.cache_only_active %}
           <span class="btn btn-outline-light btn-sm disabled" aria-disabled="true">Refresco bloqueado</span>
         {% else %}
@@ -58,7 +78,7 @@
         {% endif %}
       </div>
 
-      <form method="post" class="playlist-form">
+      <form method="get" class="playlist-form">
         <input type="hidden" name="tab" value="{{ selected_tab }}">
         <div class="mb-4">
           <label for="item_query" class="form-label">{{ tab_copy.search_label }}</label>
@@ -73,28 +93,49 @@
           <div class="form-hint mt-2">{{ tab_copy.search_hint }}</div>
         </div>
 
+        {% if cache_status %}
+          <div class="result-grid mb-4">
+            <div class="result-stat">
+              <strong>{{ cache_status.age_label }}</strong>
+              <span>edad cache</span>
+            </div>
+            <div class="result-stat">
+              <strong>{{ cache_status.fetched_at_label }}</strong>
+              <span>ultima carga</span>
+            </div>
+            <div class="result-stat">
+              <strong>{{ cache_status.expires_at_label }}</strong>
+              <span>expira</span>
+            </div>
+            <div class="result-stat">
+              <strong>{{ 'si' if cache_status.has_cache else 'no' }}</strong>
+              <span>copia local</span>
+            </div>
+          </div>
+        {% endif %}
+
         <div class="result-grid mb-4">
           <div class="result-stat">
             <strong>{{ filtered_summary.primary_count }}</strong>
             <span>{{ filtered_summary.primary_label }} visibles</span>
           </div>
           <div class="result-stat">
-            <strong>{{ summary.primary_count }}</strong>
-            <span>{{ summary.primary_label }} totales</span>
+            <strong>{{ library_view.total_count or summary.primary_count }}</strong>
+            <span>{{ summary.primary_label }} disponibles</span>
           </div>
           <div class="result-stat">
             <strong>{{ summary.secondary_count }}</strong>
-            <span>{{ summary.secondary_label }}</span>
+            <span>{{ summary.secondary_label }}{% if library_view.uses_partial_data %} del bloque{% endif %}</span>
           </div>
           <div class="result-stat">
             <strong>{{ summary.tertiary_count }}</strong>
-            <span>{{ summary.tertiary_label }}</span>
+            <span>{{ summary.tertiary_label }}{% if library_view.uses_partial_data %} del bloque{% endif %}</span>
           </div>
         </div>
 
         <div class="d-flex flex-wrap gap-3">
-          <button type="submit" class="btn btn-spotify btn-lg">Exportar seccion a TXT</button>
-          <a href="{{ url_for('personal_library', tab=selected_tab) }}" class="btn btn-outline-light btn-lg">Limpiar filtro</a>
+          <button type="submit" class="btn btn-spotify btn-lg">Aplicar filtro</button>
+          <a href="{{ url_for('personal_library', tab=selected_tab, clear_query=1) }}" class="btn btn-outline-light btn-lg">Limpiar filtro</a>
         </div>
 
         <div class="form-hint mt-3">
@@ -105,6 +146,14 @@
           {% endif %}
         </div>
       </form>
+
+      <form method="post" class="mt-4 d-flex flex-wrap gap-3 align-items-center">
+        <input type="hidden" name="tab" value="{{ selected_tab }}">
+        <input type="hidden" name="page" value="{{ library_view.page }}">
+        <button type="submit" class="btn btn-outline-light btn-lg">Exportar seccion a TXT</button>
+        <span class="micro-note">La exportacion usa el filtro actual y no depende de reenviar la busqueda.</span>
+      </form>
+      {% endif %}
     </div>
   </div>
 
@@ -115,27 +164,28 @@
         <span>01</span>
         <div>
           <strong>Duracion o volumen</strong>
-          <p class="mb-0">{{ summary.duration_label if summary.duration_label != '-' else 'Seccion lista para navegar y exportar' }}</p>
+          <p class="mb-0">{{ summary.duration_label if selected_tab and summary.duration_label != '-' else ('Seccion lista para navegar y exportar' if selected_tab else 'Primero elige una pestana para cargar datos') }}</p>
         </div>
       </div>
       <div class="process-step">
         <span>02</span>
         <div>
           <strong>Ultima fecha registrada</strong>
-          <p class="mb-0">{{ summary.latest_added_at or 'No aplica en esta seccion' }}</p>
+          <p class="mb-0">{{ summary.latest_added_at or ('No aplica en esta seccion' if selected_tab else 'Todavia no hay una seccion activa') }}</p>
         </div>
       </div>
       <div class="process-step mb-0">
         <span>03</span>
         <div>
           <strong>Exportacion</strong>
-          <p class="mb-0">Generamos un TXT con el subconjunto visible de {{ selected_tab }}.</p>
+          <p class="mb-0">{% if selected_tab %}Generamos un TXT con el subconjunto visible de {{ selected_tab }}.{% else %}La exportacion se activa cuando eliges una seccion concreta.{% endif %}</p>
         </div>
       </div>
     </div>
   </div>
 </section>
 
+{% if selected_tab %}
 <section class="content-panel mt-4">
   <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center mb-4">
     <div>
@@ -143,14 +193,14 @@
       <h2 class="section-title mt-2 mb-0">{{ tab_copy.preview_title }}</h2>
     </div>
     <div class="result-source-pill">
-      <strong>{{ filtered_summary.primary_count }}</strong>
-      <span>{{ filtered_summary.primary_label }} tras el filtro</span>
+      <strong>{{ library_view.loaded_count if library_view.uses_partial_data else filtered_summary.primary_count }}</strong>
+      <span>{% if library_view.uses_partial_data %}cargados hasta ahora{% else %}{{ filtered_summary.primary_label }} tras el filtro{% endif %}</span>
     </div>
   </div>
 
   {% if items %}
     <div class="playlist-picker">
-      {% for item in items[:80] %}
+      {% for item in items %}
         <div class="playlist-option">
           <div class="playlist-option-body">
             <strong>{{ loop.index }}. {{ item.title }}</strong>
@@ -170,8 +220,16 @@
         </div>
       {% endfor %}
     </div>
-    {% if filtered_summary.primary_count > 80 %}
-      <div class="form-hint mt-3">Mostramos los primeros 80 elementos visibles para mantener la pagina ligera. La exportacion incluye todo el filtro.</div>
+    {% if library_view.uses_partial_data %}
+      <div class="form-hint mt-3">Estamos cargando esta seccion por bloques para no pedir toda tu biblioteca de golpe. Los contadores secundarios se calculan sobre lo ya cargado.</div>
+      {% if library_view.has_more %}
+        <div class="mt-3 d-flex flex-wrap gap-3 align-items-center">
+          <a href="{{ url_for('personal_library', tab=selected_tab, page=library_view.page + 1) }}" class="btn btn-outline-light">Cargar mas</a>
+          <span class="micro-note">Llevas {{ library_view.loaded_count }} de {{ library_view.total_count }} elementos cargados.</span>
+        </div>
+      {% endif %}
+    {% elif filtered_summary.primary_count > 80 %}
+      <div class="form-hint mt-3">Mostramos todos los elementos cargados para este filtro. La exportacion incluye todo el subconjunto visible.</div>
     {% endif %}
   {% else %}
     <div class="empty-state compact-empty">
@@ -180,6 +238,7 @@
     </div>
   {% endif %}
 </section>
+{% endif %}
 
 {% if result %}
 <section class="content-panel result-panel mt-4">

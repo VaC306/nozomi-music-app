@@ -440,8 +440,37 @@ def create_app() -> Flask:
         return status
 
     def get_playlist_cache_mode() -> str:
-        cache_mode = str(session.get("playlist_cache_mode", "cache_only")).strip().lower()
-        return cache_mode if cache_mode in {"cache_only", "normal"} else "cache_only"
+        cache_mode = str(session.get("playlist_cache_mode", "normal")).strip().lower()
+        return cache_mode if cache_mode in {"cache_only", "normal"} else "normal"
+
+    def get_personal_library_tabs() -> list[dict[str, Any]]:
+        granted_scopes = set(session.get("spotify_scopes") or [])
+        tabs = [
+            {
+                "id": "tracks",
+                "label": "Canciones",
+                "description": "Tus Liked Songs completas.",
+                "required_scopes": ["user-library-read"],
+                "feature_name": "tus canciones guardadas",
+            },
+            {
+                "id": "albums",
+                "label": "Albumes",
+                "description": "Tus albumes guardados.",
+                "required_scopes": ["user-library-read"],
+                "feature_name": "tus albumes guardados",
+            },
+            {
+                "id": "artists",
+                "label": "Artistas",
+                "description": "Los artistas que sigues.",
+                "required_scopes": ["user-follow-read"],
+                "feature_name": "tus artistas seguidos",
+            },
+        ]
+        for tab in tabs:
+            tab["enabled"] = all(scope in granted_scopes for scope in tab["required_scopes"])
+        return tabs
 
     def start_dashboard_operation() -> Any:
         spotify_user_id, display_name = get_current_spotify_user_identity()
@@ -541,8 +570,8 @@ def create_app() -> Flask:
                 "url": url_for("playlist_enhancer"),
             },
             {
-                "title": "Recomendaciones por genero",
-                "description": "Explora canciones por genero con fallback automatico si Spotify limita el endpoint principal.",
+                "title": "Descubrimiento por artista",
+                "description": "Explora artistas y canciones cercanas a una referencia base con rutas alternativas si Spotify se pone restrictivo.",
                 "status": "Activo",
                 "url": url_for("recommendations"),
             },
@@ -554,7 +583,7 @@ def create_app() -> Flask:
             },
             {
                 "title": "Dashboard",
-                "description": "Resumen visual de top tracks, artists, generos y actividad reciente.",
+                "description": "Resumen visual de top tracks, artists y actividad reciente.",
                 "status": "Activo",
                 "url": url_for("dashboard"),
             },
@@ -718,6 +747,7 @@ def create_app() -> Flask:
         if request.method == "POST":
             playlist_name = request.form.get("playlist_name", "")
             upload = request.files.get("playlist_file")
+            txt_path = None
             try:
                 txt_path = manager.save_uploaded_txt(upload)
                 result = manager.create_playlist_from_txt(
@@ -729,6 +759,9 @@ def create_app() -> Flask:
                 flash("Playlist creada correctamente en Spotify.", "success")
             except (PlaylistImportError, SpotifyClientError) as exc:
                 flash(str(exc), "danger")
+            finally:
+                if txt_path is not None:
+                    txt_path.unlink(missing_ok=True)
 
         return render_template(
             "create_playlist.html",
@@ -756,7 +789,7 @@ def create_app() -> Flask:
         )
         current_user_id = str(session.get("spotify_user", {}).get("id", ""))
         cache_mode = get_playlist_cache_mode()
-        refresh_cache = request.method == "GET" and request.args.get("refresh_cache", "").strip() == "1"
+        refresh_cache = request.values.get("refresh_cache", "").strip() == "1"
         protection_state = build_spotify_protection_state()
         use_cache_only = cache_mode == "cache_only" or protection_state["cache_only_active"]
         search_query = request.form.get("playlist_query", "") if request.method == "POST" else ""
@@ -804,6 +837,7 @@ def create_app() -> Flask:
                         access_token=session["spotify_access_token"],
                         playlist=selected_playlist,
                         cache_only=use_cache_only,
+                        force_refresh=refresh_cache,
                     )
                     flash("Playlist exportada correctamente a TXT.", "success")
                 except (PlaylistImportError, SpotifyClientError) as exc:
@@ -822,8 +856,9 @@ def create_app() -> Flask:
     @app.route("/exports/<path:filename>")
     @login_required
     def download_export(filename: str) -> Any:
-        file_path = Path(app.config["EXPORT_FOLDER"]) / filename
-        if not file_path.exists() or not file_path.is_file():
+        export_dir = Path(app.config["EXPORT_FOLDER"]).resolve()
+        file_path = (export_dir / filename).resolve()
+        if export_dir not in file_path.parents or not file_path.exists() or not file_path.is_file():
             flash("No se encontro el archivo exportado solicitado.", "danger")
             return redirect(url_for("export_playlist"))
         return send_file(file_path, as_attachment=True, download_name=file_path.name)
@@ -831,23 +866,110 @@ def create_app() -> Flask:
     @app.route("/personal-library", methods=["GET", "POST"])
     @login_required
     def personal_library() -> Any:
-        try:
-            spotify_client = ensure_spotify_session()
-            ensure_required_spotify_scopes(["user-library-read", "user-follow-read"], "tu biblioteca personal")
-        except SpotifyAuthError as exc:
-            flash(str(exc), "warning")
-            return redirect(url_for("login"))
-
         library_service = PersonalLibraryService(
             Path(app.config["EXPORT_FOLDER"]),
             user_id=str(session.get("spotify_user", {}).get("id", "")),
         )
-        selected_tab = PersonalLibraryService.normalize_tab(request.values.get("tab", "tracks"))
+        library_tabs = get_personal_library_tabs()
+        selected_tab_raw = str(request.values.get("tab", "")).strip().lower()
+        selected_tab = PersonalLibraryService.normalize_tab(selected_tab_raw) if selected_tab_raw else ""
+        active_tab = next((tab for tab in library_tabs if tab["id"] == selected_tab), None)
         cache_mode = get_playlist_cache_mode()
-        refresh_cache = request.method == "GET" and request.args.get("refresh_cache", "").strip() == "1"
+        refresh_cache = request.values.get("refresh_cache", "").strip() == "1"
         protection_state = build_spotify_protection_state()
         use_cache_only = cache_mode == "cache_only" or protection_state["cache_only_active"]
-        search_query = request.form.get("item_query", "") if request.method == "POST" else request.args.get("q", "")
+        stored_queries = session.get("personal_library_queries", {}) or {}
+        stored_pages = session.get("personal_library_pages", {}) or {}
+        search_query = ""
+        current_page = 1
+        items: list[dict[str, Any]] = []
+        summary = {
+            "primary_count": 0,
+            "secondary_count": 0,
+            "tertiary_count": 0,
+            "duration_label": "-",
+            "latest_added_at": "",
+            "primary_label": "elementos",
+            "secondary_label": "metadata",
+            "tertiary_label": "extra",
+        }
+        filtered_summary = dict(summary)
+        tab_copy = {
+            "title": "Elige una seccion para cargar",
+            "subtitle": "Nozomi solo carga la pestana que abras. Asi no pedimos toda tu biblioteca nada mas entrar.",
+            "search_label": "Buscar",
+            "search_hint": "Selecciona primero una seccion.",
+            "search_placeholder": "",
+            "preview_title": "Preview",
+        }
+        result = None
+        cache_status = None
+        library_view = {
+            "page": 1,
+            "page_size": PersonalLibraryService.PREVIEW_PAGE_SIZE,
+            "loaded_count": 0,
+            "total_count": 0,
+            "has_more": False,
+            "supports_incremental": False,
+            "uses_partial_data": False,
+        }
+
+        if request.method == "POST" and not selected_tab:
+            flash("Elige primero una seccion de la biblioteca antes de exportar o filtrar.", "warning")
+            return redirect(url_for("personal_library"))
+
+        if selected_tab:
+            if request.method == "POST":
+                search_query = str(stored_queries.get(selected_tab, ""))
+                raw_page = request.form.get("page", str(stored_pages.get(selected_tab, 1)))
+            elif request.args.get("clear_query", "").strip() == "1":
+                search_query = ""
+                stored_queries[selected_tab] = ""
+                session["personal_library_queries"] = stored_queries
+                raw_page = "1"
+            elif "q" in request.args:
+                search_query = request.args.get("q", "")
+                stored_queries[selected_tab] = search_query
+                session["personal_library_queries"] = stored_queries
+                raw_page = request.args.get("page", "1")
+            else:
+                search_query = str(stored_queries.get(selected_tab, ""))
+                raw_page = request.args.get("page", str(stored_pages.get(selected_tab, 1)))
+            current_page = int(raw_page) if str(raw_page).isdigit() else 1
+            current_page = max(current_page, 1)
+
+        if selected_tab and active_tab and not active_tab["enabled"]:
+            flash(
+                f"Tu sesion actual no tiene permisos para abrir {active_tab['feature_name']}. Cierra sesion y vuelve a entrar para renovar permisos.",
+                "warning",
+            )
+            return redirect(url_for("personal_library"))
+
+        if not selected_tab:
+            return render_template(
+                "personal_library.html",
+                items=items,
+                summary=summary,
+                filtered_summary=filtered_summary,
+                search_query=search_query,
+                result=result,
+                cache_mode=cache_mode,
+                cache_status=cache_status,
+                protection_state=protection_state,
+                selected_tab=selected_tab,
+                tab_copy=tab_copy,
+                library_tabs=library_tabs,
+            )
+
+        if active_tab is None:
+            return redirect(url_for("personal_library"))
+
+        try:
+            spotify_client = ensure_spotify_session()
+            ensure_required_spotify_scopes(active_tab["required_scopes"], active_tab["feature_name"])
+        except SpotifyAuthError as exc:
+            flash(str(exc), "warning")
+            return redirect(url_for("login"))
 
         if refresh_cache and protection_state["cache_only_active"]:
             flash(protection_state["message"], "warning")
@@ -856,26 +978,61 @@ def create_app() -> Flask:
             library_service.clear_cache(selected_tab)
 
         try:
-            all_items = library_service.list_items(
-                tab=selected_tab,
-                spotify_client=spotify_client,
-                access_token=session["spotify_access_token"],
-                prefer_cached=use_cache_only and not refresh_cache,
-                allow_stale=use_cache_only,
-                cache_only=use_cache_only,
-                force_refresh=refresh_cache,
-            )
+            if search_query.strip() or request.method == "POST":
+                all_items = library_service.list_items(
+                    tab=selected_tab,
+                    spotify_client=spotify_client,
+                    access_token=session["spotify_access_token"],
+                    prefer_cached=use_cache_only and not refresh_cache,
+                    allow_stale=use_cache_only,
+                    cache_only=use_cache_only,
+                    force_refresh=refresh_cache,
+                )
+                library_view = {
+                    "page": 1,
+                    "page_size": len(all_items),
+                    "loaded_count": len(all_items),
+                    "total_count": len(all_items),
+                    "has_more": False,
+                    "supports_incremental": False,
+                    "uses_partial_data": False,
+                }
+            else:
+                library_view = library_service.list_items_incremental(
+                    tab=selected_tab,
+                    spotify_client=spotify_client,
+                    access_token=session["spotify_access_token"],
+                    page=current_page,
+                    prefer_cached=use_cache_only and not refresh_cache,
+                    allow_stale=use_cache_only,
+                    cache_only=use_cache_only,
+                    force_refresh=refresh_cache,
+                )
+                all_items = library_view["items"]
         except (PlaylistImportError, SpotifyClientError) as exc:
             all_items = library_service.get_cached_items(selected_tab)
             flash(str(exc), "danger")
             if all_items:
                 flash("Mostramos una copia en cache de tu biblioteca para que puedas seguir trabajando.", "warning")
+            library_view = {
+                "page": 1,
+                "page_size": len(all_items),
+                "loaded_count": len(all_items),
+                "total_count": len(all_items),
+                "has_more": False,
+                "supports_incremental": False,
+                "uses_partial_data": False,
+            }
 
+        stored_queries[selected_tab] = search_query
+        session["personal_library_queries"] = stored_queries
+        stored_pages[selected_tab] = int(library_view["page"])
+        session["personal_library_pages"] = stored_pages
         items = library_service.filter_items(all_items, search_query)
         summary = library_service.build_summary(selected_tab, all_items)
         filtered_summary = library_service.build_summary(selected_tab, items)
         tab_copy = library_service.get_tab_copy(selected_tab)
-        result = None
+        cache_status = library_service.get_cache_status(selected_tab)
 
         if request.method == "POST":
             try:
@@ -892,14 +1049,12 @@ def create_app() -> Flask:
             search_query=search_query,
             result=result,
             cache_mode=cache_mode,
+            cache_status=cache_status,
+            library_view=library_view,
             protection_state=protection_state,
             selected_tab=selected_tab,
             tab_copy=tab_copy,
-            library_tabs=[
-                {"id": "tracks", "label": "Canciones"},
-                {"id": "albums", "label": "Albumes"},
-                {"id": "artists", "label": "Artistas"},
-            ],
+            library_tabs=library_tabs,
         )
 
     @app.route("/recommendations")
@@ -1010,6 +1165,7 @@ def create_app() -> Flask:
                         access_token=session["spotify_access_token"],
                         playlist=selected_playlist,
                         cache_only=use_cache_only,
+                        force_refresh=refresh_cache,
                     )
                     flash("Playlist analizada correctamente.", "success")
                 except SpotifyClientError as exc:
@@ -1101,11 +1257,21 @@ def create_app() -> Flask:
         finally:
             if operation_token is not None:
                 monitoring_service.finish_operation(operation_token, send_dashboard_summary=operation_success)
+        previous_tracks, previous_tracks_label = stats_service.get_previous_top_items("tracks", selected_range)
+        previous_artists, previous_artists_label = stats_service.get_previous_top_items("artists", selected_range)
+        compared_tracks = stats_service.annotate_rank_changes(snapshot.top_tracks[selected_range], previous_tracks)
+        compared_artists = stats_service.annotate_rank_changes(snapshot.top_artists[selected_range], previous_artists)
         return render_template(
             "dashboard.html",
             snapshot=snapshot,
+            compared_tracks=compared_tracks[:DASHBOARD_PREVIEW_ITEMS_LIMIT],
+            compared_artists=compared_artists[:DASHBOARD_PREVIEW_ITEMS_LIMIT],
+            track_comparison_summary=stats_service.build_comparison_summary(compared_tracks),
+            artist_comparison_summary=stats_service.build_comparison_summary(compared_artists),
             time_range_labels=TIME_RANGE_LABELS,
             selected_range=selected_range,
+            previous_tracks_label=previous_tracks_label,
+            previous_artists_label=previous_artists_label,
             preview_limit=DASHBOARD_PREVIEW_ITEMS_LIMIT,
             cache_mode=cache_mode,
             protection_state=protection_state,
@@ -1168,13 +1334,17 @@ def create_app() -> Flask:
         items = stats_service.get_top_items(item_type=item_type, time_range=selected_range)
         if not items:
             items = snapshot.top_tracks[selected_range] if item_type == "tracks" else snapshot.top_artists[selected_range]
+        previous_items, previous_snapshot_label = stats_service.get_previous_top_items(item_type, selected_range)
+        compared_items = stats_service.annotate_rank_changes(items, previous_items)
 
         return render_template(
             "dashboard_top_list.html",
             snapshot=snapshot,
-            items=items,
+            items=compared_items,
             item_type=item_type,
             selected_range=selected_range,
+            previous_snapshot_label=previous_snapshot_label,
+            comparison_summary=stats_service.build_comparison_summary(compared_items),
             time_range_labels=TIME_RANGE_LABELS,
             cache_mode=cache_mode,
             protection_state=protection_state,
@@ -1247,7 +1417,7 @@ def create_app() -> Flask:
             if form_action == "cache_preferences":
                 cache_mode = request.form.get("cache_mode", cache_mode).strip().lower()
                 if cache_mode not in {"cache_only", "normal"}:
-                    cache_mode = "cache_only"
+                    cache_mode = "normal"
                 session["playlist_cache_mode"] = cache_mode
                 flash("Preferencia de cache actualizada.", "success")
                 return redirect(url_for("profile"))

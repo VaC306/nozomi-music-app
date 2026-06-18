@@ -41,6 +41,17 @@
 </section>
 {% endif %}
 
+<section class="content-panel mb-4">
+  <span class="eyebrow">Lectura rapida</span>
+  <div class="result-grid mt-3">
+    <div class="result-stat"><strong>{{ comparison_summary.up }}</strong><span>suben</span></div>
+    <div class="result-stat"><strong>{{ comparison_summary.down }}</strong><span>bajan</span></div>
+    <div class="result-stat"><strong>{{ comparison_summary.new }}</strong><span>primera vez</span></div>
+    <div class="result-stat"><strong>{{ comparison_summary.same }}</strong><span>se mantienen</span></div>
+  </div>
+  <p class="micro-note mt-3 mb-0">Comparando {{ time_range_labels[selected_range] }} contra el snapshot anterior guardado{% if previous_snapshot_label %} de {{ previous_snapshot_label }}{% endif %}.</p>
+</section>
+
 <section class="content-panel dashboard-card">
   <div class="dashboard-list">
     {% for item in items %}
@@ -55,6 +66,7 @@
             <p>{{ item.artists }}</p>
             <p class="micro-note mb-0">{{ item.album }}</p>
           {% endif %}
+          <p class="micro-note mb-0">{{ item.movement_label }}{% if item.previous_rank %} · antes #{{ item.previous_rank }}{% endif %}</p>
         </div>
         {% if item.spotify_url %}<a href="{{ item.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
       </article>

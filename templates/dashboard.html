@@ -42,6 +42,17 @@
   </div>
 </section>
 
+<section class="content-panel mb-4">
+  <span class="eyebrow">Comparativa</span>
+  <div class="result-grid mt-3">
+    <div class="result-stat"><strong>{{ track_comparison_summary.up }}</strong><span>tracks suben</span></div>
+    <div class="result-stat"><strong>{{ track_comparison_summary.new }}</strong><span>tracks nuevas</span></div>
+    <div class="result-stat"><strong>{{ artist_comparison_summary.up }}</strong><span>artists suben</span></div>
+    <div class="result-stat"><strong>{{ artist_comparison_summary.new }}</strong><span>artists nuevos</span></div>
+  </div>
+  <p class="micro-note mt-3 mb-0">Leemos {{ time_range_labels[selected_range] }} contra el snapshot anterior guardado{% if previous_tracks_label or previous_artists_label %}. Ultima referencia: {{ previous_tracks_label or previous_artists_label }}{% endif %}.</p>
+</section>
+
 {% if protection_state.cache_only_active %}
 <section class="content-panel mb-4">
   <span class="eyebrow">Proteccion Spotify</span>
@@ -70,13 +81,14 @@
       </div>
     </div>
     <div class="dashboard-list">
-      {% for track in snapshot.top_tracks[selected_range][:preview_limit] %}
+      {% for track in compared_tracks %}
         <article class="dashboard-item">
           <span class="dashboard-rank">{{ track.rank }}</span>
           {% if track.image_url %}<img src="{{ track.image_url }}" alt="{{ track.name }}" class="dashboard-thumb">{% else %}<div class="dashboard-thumb dashboard-thumb-placeholder">♪</div>{% endif %}
           <div>
             <strong>{{ track.name }}</strong>
             <p>{{ track.artists }}</p>
+            <p class="micro-note mb-0">{{ track.movement_label }}{% if track.previous_rank %} · antes #{{ track.previous_rank }}{% endif %}</p>
           </div>
           {% if track.spotify_url %}<a href="{{ track.spotify_url }}" target="_blank" rel="noopener noreferrer">Abrir</a>{% endif %}
         </article>
@@ -95,11 +107,12 @@
       </div>
     </div>
     <div class="dashboard-list mt-3">
-      {% for artist in snapshot.top_artists[selected_range][:preview_limit] %}
+      {% for artist in compared_artists %}
         <article class="dashboard-item dashboard-item-compact">
           <span class="dashboard-rank">{{ artist.rank }}</span>
           <div>
             <strong>{{ artist.name }}</strong>
+            <p class="micro-note mb-0">{{ artist.movement_label }}{% if artist.previous_rank %} · antes #{{ artist.previous_rank }}{% endif %}</p>
           </div>
         </article>
       {% endfor %}

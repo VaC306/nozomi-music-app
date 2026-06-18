@@ -161,6 +161,25 @@ class SpotifyClient:
             params = None
         return tracks
 
+    def get_saved_tracks_page(self, access_token: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        data = self.request(
+            access_token,
+            "GET",
+            "/me/tracks",
+            params={"limit": max(1, min(limit, 50)), "offset": max(offset, 0)},
+        )
+        total = data.get("total", 0)
+        total_count = total if isinstance(total, int) else 0
+        items = data.get("items", [])
+        next_url = data.get("next")
+        return {
+            "items": items,
+            "limit": max(1, min(limit, 50)),
+            "offset": max(offset, 0),
+            "total": total_count,
+            "has_more": bool(next_url),
+        }
+
     def get_saved_albums(self, access_token: str) -> list[dict[str, Any]]:
         albums: list[dict[str, Any]] = []
         endpoint = "/me/albums"
@@ -175,6 +194,25 @@ class SpotifyClient:
             endpoint = next_url.replace(self.API_BASE_URL, "")
             params = None
         return albums
+
+    def get_saved_albums_page(self, access_token: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        data = self.request(
+            access_token,
+            "GET",
+            "/me/albums",
+            params={"limit": max(1, min(limit, 50)), "offset": max(offset, 0)},
+        )
+        total = data.get("total", 0)
+        total_count = total if isinstance(total, int) else 0
+        items = data.get("items", [])
+        next_url = data.get("next")
+        return {
+            "items": items,
+            "limit": max(1, min(limit, 50)),
+            "offset": max(offset, 0),
+            "total": total_count,
+            "has_more": bool(next_url),
+        }
 
     def get_followed_artists(self, access_token: str) -> list[dict[str, Any]]:
         artists: list[dict[str, Any]] = []

@@ -9,7 +9,7 @@
       <span class="eyebrow">Fase 3 activa</span>
       <h1 class="section-title mt-3">Exportar playlists a TXT</h1>
       <p class="panel-copy mt-3 mb-0">
-        Busca entre tus playlists propias y colaborativas, selecciona una y genera un TXT numerado listo para descargar desde la carpeta `exports/`.
+        Busca entre tus playlists propias y colaborativas, selecciona una y genera un TXT reutilizable listo para descargar desde la carpeta `exports/`.
       </p>
     </div>
     <div class="col-lg-5">
@@ -48,11 +48,14 @@
         {% if protection_state.cache_only_active %}
           <span class="btn btn-outline-light btn-sm disabled" aria-disabled="true">Refresco bloqueado</span>
         {% else %}
-          <a href="{{ url_for('export_playlist', refresh_cache=1) }}" class="btn btn-outline-light btn-sm">Forzar refresco de cache</a>
+          <a href="{{ url_for('export_playlist', refresh_cache=1) }}" class="btn btn-outline-light btn-sm">Forzar refresco completo</a>
         {% endif %}
       </div>
 
       <form method="post" class="playlist-form">
+        {% if request.args.get('refresh_cache') == '1' %}
+          <input type="hidden" name="refresh_cache" value="1">
+        {% endif %}
         <div class="mb-4">
           <label for="playlist_query" class="form-label">Buscar por nombre</label>
           <input
@@ -105,7 +108,7 @@
           {% if cache_mode == 'cache_only' or protection_state.cache_only_active %}
             Solo cache: no haremos llamadas nuevas a Spotify desde esta pantalla. Puedes cambiarlo en Perfil.
           {% else %}
-            Normal: usaremos cache y solo llamaremos a Spotify cuando haga falta. Puedes cambiarlo en Perfil.
+            Normal: usaremos cache y, si fuerzas refresco, volveremos a pedir tambien los tracks de la playlist. Puedes cambiarlo en Perfil.
           {% endif %}
         </div>
       </form>

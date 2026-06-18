@@ -27,7 +27,7 @@ def normalize_text(value: str) -> str:
 
 
 def parse_song_line(line: str) -> tuple[str, str]:
-    cleaned = line.strip()
+    cleaned = re.sub(r"^\s*\d+\.\s+", "", line.strip())
     if not cleaned:
         raise ValueError("La linea esta vacia.")
     parts = cleaned.split(" - ", 1)
@@ -129,15 +129,19 @@ class PlaylistManager:
                 continue
             found_tracks.append(best_match)
 
+        track_uris = [track["uri"] for track in found_tracks if track.get("uri")]
+        if not track_uris:
+            raise PlaylistImportError(
+                "No encontramos canciones validas para crear la playlist. Revisa las lineas invalidas o no encontradas e intentalo otra vez."
+            )
+
         playlist = spotify_client.create_playlist(
             access_token,
             name=cleaned_name,
             description="Playlist creada desde Nozomi Music.",
         )
 
-        track_uris = [track["uri"] for track in found_tracks if track.get("uri")]
-        if track_uris:
-            spotify_client.add_tracks_to_playlist(access_token, playlist["id"], track_uris)
+        spotify_client.add_tracks_to_playlist(access_token, playlist["id"], track_uris)
 
         self.cache_service.delete("user-playlists:v1")
         self.cache_service.delete("dashboard-snapshot:v1")
@@ -231,10 +235,11 @@ class PlaylistManager:
         access_token: str,
         playlist: dict[str, Any],
         cache_only: bool = False,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         playlist_id = str(playlist.get("id", "")).strip()
         cache_key = f"{self.PLAYLIST_TRACKS_CACHE_KEY_PREFIX}{playlist_id}"
-        tracks = self.cache_service.get(cache_key, allow_stale=True)
+        tracks = None if force_refresh else self.cache_service.get(cache_key, allow_stale=True)
         if tracks is None and cache_only:
             raise PlaylistImportError(
                 "No hay una copia en cache de esa playlist todavia. Desactiva 'solo cache' o fuerza un refresco cuando Spotify lo permita."
@@ -245,6 +250,7 @@ class PlaylistManager:
                 ttl_seconds=self.PLAYLIST_TRACKS_TTL_SECONDS,
                 source_endpoint="get_playlist_tracks",
                 fetcher=lambda: spotify_client.get_playlist_tracks(access_token, playlist_id),
+                force_refresh=force_refresh,
             )
         if not tracks:
             raise PlaylistImportError("La playlist no tiene canciones para exportar.")

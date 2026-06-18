@@ -61,6 +61,8 @@ Scopes usados:
 - `playlist-modify-private`
 - `playlist-read-private`
 - `playlist-read-collaborative`
+- `user-library-read`
+- `user-follow-read`
 - `user-top-read`
 - `user-read-recently-played`
 - `user-read-private`
@@ -162,7 +164,7 @@ Permite buscar un artista base y obtener:
 - canciones relacionadas
 - resultados alternativos si el endpoint principal no responde como se espera
 
-La idea es explorar musica nueva a partir de una referencia conocida.
+La idea es explorar musica nueva a partir de una referencia conocida, con un fallback apoyado en generos del artista cuando Spotify se pone restrictivo.
 
 ### 7. Prompt generator
 

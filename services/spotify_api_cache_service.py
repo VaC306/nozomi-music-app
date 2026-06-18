@@ -46,6 +46,48 @@ class SpotifyApiCacheService:
         db.session.delete(row)
         db.session.commit()
 
+    def delete_by_prefix(self, cache_key_prefix: str) -> None:
+        rows = SpotifyApiCache.query.filter(
+            SpotifyApiCache.cache_scope == self.cache_scope,
+            SpotifyApiCache.cache_key.like(f"{cache_key_prefix}%"),
+        ).all()
+        if not rows:
+            return
+        for row in rows:
+            db.session.delete(row)
+        db.session.commit()
+
+    def get_metadata(self, cache_key: str) -> dict[str, Any] | None:
+        row = self._get_row(cache_key)
+        if not row:
+            return None
+        return self._build_metadata(row)
+
+    def get_latest_metadata_by_prefix(self, cache_key_prefix: str) -> dict[str, Any] | None:
+        row = (
+            SpotifyApiCache.query.filter(
+                SpotifyApiCache.cache_scope == self.cache_scope,
+                SpotifyApiCache.cache_key.like(f"{cache_key_prefix}%"),
+            )
+            .order_by(SpotifyApiCache.fetched_at.desc())
+            .first()
+        )
+        if not row:
+            return None
+        return self._build_metadata(row)
+
+    @staticmethod
+    def _build_metadata(row: SpotifyApiCache) -> dict[str, Any]:
+        now = datetime.utcnow()
+        return {
+            "cache_key": row.cache_key,
+            "source_endpoint": row.source_endpoint,
+            "fetched_at": row.fetched_at,
+            "expires_at": row.expires_at,
+            "is_stale": row.expires_at < now,
+            "age_seconds": max(int((now - row.fetched_at).total_seconds()), 0) if row.fetched_at else 0,
+        }
+
     def get_or_set(
         self,
         cache_key: str,

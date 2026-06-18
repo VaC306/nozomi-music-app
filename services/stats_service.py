@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
-from models import DashboardTopSnapshot, db
+from models import DashboardTopHistorySnapshot, DashboardTopSnapshot, db
 from services.artist_cache_service import ArtistCacheService
 from services.discord_monitoring import DiscordMonitoringService
 from services.spotify_api_cache_service import SpotifyApiCacheService
@@ -169,6 +169,91 @@ class StatsService:
             return []
         return payload if isinstance(payload, list) else []
 
+    def get_previous_top_items(self, item_type: str, time_range: str) -> tuple[list[dict[str, Any]], str | None]:
+        if item_type not in {"tracks", "artists"}:
+            return [], None
+        rows = (
+            DashboardTopHistorySnapshot.query.filter_by(
+                spotify_user_id=self.user_id,
+                snapshot_type=item_type,
+                time_range=time_range,
+            )
+            .order_by(DashboardTopHistorySnapshot.fetched_at.desc(), DashboardTopHistorySnapshot.id.desc())
+            .limit(2)
+            .all()
+        )
+        if len(rows) < 2:
+            return [], None
+        previous_row = rows[1]
+        try:
+            payload = json.loads(previous_row.payload_json or "[]")
+        except json.JSONDecodeError:
+            return [], None
+        previous_label = previous_row.fetched_at.strftime("%d/%m/%Y %H:%M") if previous_row.fetched_at else None
+        return (payload if isinstance(payload, list) else []), previous_label
+
+    @staticmethod
+    def annotate_rank_changes(
+        current_items: list[dict[str, Any]],
+        reference_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        reference_positions = {
+            StatsService._build_comparison_key(item): item.get("rank", index)
+            for index, item in enumerate(reference_items, start=1)
+        }
+        annotated: list[dict[str, Any]] = []
+        for index, item in enumerate(current_items, start=1):
+            current_rank = int(item.get("rank", index) or index)
+            item_key = StatsService._build_comparison_key(item)
+            previous_rank = reference_positions.get(item_key)
+            movement = "new"
+            rank_delta = None
+            if previous_rank is not None:
+                rank_delta = int(previous_rank) - current_rank
+                if rank_delta > 0:
+                    movement = "up"
+                elif rank_delta < 0:
+                    movement = "down"
+                else:
+                    movement = "same"
+            annotated.append(
+                {
+                    **item,
+                    "previous_rank": previous_rank,
+                    "rank_delta": rank_delta,
+                    "movement": movement,
+                    "movement_label": StatsService._build_movement_label(movement, rank_delta),
+                }
+            )
+        return annotated
+
+    @staticmethod
+    def build_comparison_summary(items: list[dict[str, Any]]) -> dict[str, int]:
+        summary = {"up": 0, "down": 0, "new": 0, "same": 0}
+        for item in items:
+            movement = str(item.get("movement", "same"))
+            if movement in summary:
+                summary[movement] += 1
+        return summary
+
+    @staticmethod
+    def _build_movement_label(movement: str, rank_delta: int | None) -> str:
+        if movement == "up" and rank_delta is not None:
+            return f"Sube {rank_delta}"
+        if movement == "down" and rank_delta is not None:
+            return f"Baja {abs(rank_delta)}"
+        if movement == "new":
+            return "Primera vez"
+        return "Se mantiene"
+
+    @staticmethod
+    def _build_comparison_key(item: dict[str, Any]) -> str:
+        spotify_url = str(item.get("spotify_url", "")).strip()
+        if spotify_url:
+            return spotify_url
+        artists = str(item.get("artists", "")).strip().lower()
+        return f"{str(item.get('name', '')).strip().lower()}::{artists}"
+
     @staticmethod
     def _safe_fetch(fetcher, warnings: list[str], fallback, warning_message: str):
         try:
@@ -188,6 +273,7 @@ class StatsService:
                 {
                     "rank": index,
                     "name": artist.get("name", "Artista desconocido"),
+                    "artist_id": artist.get("id", ""),
                     "image_url": images[0].get("url", "") if images else "",
                     "spotify_url": artist.get("external_urls", {}).get("spotify", ""),
                 }
@@ -199,6 +285,7 @@ class StatsService:
         top_tracks: dict[str, list[dict[str, Any]]],
         top_artists: dict[str, list[dict[str, Any]]],
     ) -> None:
+        now = datetime.utcnow()
         for snapshot_type, payload_by_range in {
             "tracks": top_tracks,
             "artists": top_artists,
@@ -210,15 +297,22 @@ class StatsService:
                     time_range=time_range,
                 ).first()
                 if row is None:
-                    row = DashboardTopSnapshot(
-                        spotify_user_id=self.user_id,
-                        snapshot_type=snapshot_type,
-                        time_range=time_range,
-                    )
+                    row = DashboardTopSnapshot()
+                    row.spotify_user_id = self.user_id
+                    row.snapshot_type = snapshot_type
+                    row.time_range = time_range
                 row.payload_json = json.dumps(items)
-                row.fetched_at = datetime.utcnow()
-                row.updated_at = datetime.utcnow()
+                row.fetched_at = now
+                row.updated_at = now
                 db.session.add(row)
+                history_row = DashboardTopHistorySnapshot()
+                history_row.spotify_user_id = self.user_id
+                history_row.snapshot_type = snapshot_type
+                history_row.time_range = time_range
+                history_row.payload_json = json.dumps(items)
+                history_row.fetched_at = now
+                history_row.updated_at = now
+                db.session.add(history_row)
         db.session.commit()
 
     @staticmethod
@@ -240,6 +334,7 @@ class StatsService:
             normalized.append(
                 {
                     "rank": index,
+                    "track_id": track.get("id", ""),
                     "name": track.get("name", "Sin titulo"),
                     "artists": ", ".join(artist.get("name", "") for artist in track.get("artists", [])),
                     "album": album.get("name", "Album"),
